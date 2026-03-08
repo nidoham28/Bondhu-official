@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme for v31+ -->
+    <style name="Theme.Bondhu" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- On API 31+, the splash screen icon is handled by the system. -->
+    <style name="Theme.Bondhu.Splash" parent="@style/Theme.Bondhu">
+        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
+    </style>
+</resources>

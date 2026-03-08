@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+    Main application theme. This is applied in the Activity's onCreate.
+    The transparent background allows the Compose UI to draw the app's background.
+    -->
+    <style name="Theme.Bondhu" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background_light</item>
+    </style>
+
+    <!--
+    Splash Screen Theme. Applied in the Manifest.
+    Inherits from the main theme but overrides the background to be solid.
+    -->
+    <style name="Theme.Bondhu.Splash" parent="@style/Theme.Bondhu">
+        <item name="android:windowBackground">@color/splash_background_light</item>
+    </style>
+</resources>

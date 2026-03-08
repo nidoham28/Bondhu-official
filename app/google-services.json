@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "870154791917",
+    "firebase_url": "https://bondhu-6b454-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "bondhu-6b454",
+    "storage_bucket": "bondhu-6b454.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:870154791917:android:917c697a4832066e6e55e4",
+        "android_client_info": {
+          "package_name": "com.nidoham.bondhu"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "870154791917-vu8sfcr8uvsavt2ht64m7viqcgkfq88n.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3JsXE01Z12Zq0DmMbt54sKAWcOcF9PqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "870154791917-vu8sfcr8uvsavt2ht64m7viqcgkfq88n.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

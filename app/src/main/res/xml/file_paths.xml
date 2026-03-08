@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+
+    <!-- Internal cache directory (for compressed images) -->
+    <cache-path
+        name="compressed_images"
+        path="." />
+
+    <!-- External cache directory -->
+    <external-cache-path
+        name="external_cache"
+        path="." />
+
+    <!-- Internal files directory -->
+    <files-path
+        name="internal_files"
+        path="." />
+
+    <!-- External files directory -->
+    <external-files-path
+        name="external_files"
+        path="." />
+
+    <!-- External storage (requires permissions) -->
+    <external-path
+        name="external_storage"
+        path="." />
+
+    <!-- Pictures directory -->
+    <external-path
+        name="pictures"
+        path="Pictures/" />
+
+    <!-- DCIM/Camera directory -->
+    <external-path
+        name="camera_photos"
+        path="DCIM/" />
+
+</paths>
