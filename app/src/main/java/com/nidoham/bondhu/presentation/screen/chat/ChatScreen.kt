@@ -2,6 +2,7 @@ package com.nidoham.bondhu.presentation.screen.chat
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -199,7 +200,8 @@ fun ChatScreen(
                                 isReadByPeer  = isReadByPeer,
                                 windowClass   = windowClass,
                                 peerAvatarUrl = uiState.peerAvatarUrl,
-                                peerName      = uiState.peerName
+                                peerName      = uiState.peerName,
+                                isPeerTyping  = uiState.isPeerTyping
                             )
                         }
                     }
@@ -271,7 +273,7 @@ private fun ChatTopBar(
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text  = if (isOnline) "online" else lastSeen.ifBlank { "last seen recently" },
+                    text  = if (isOnline) "active" else lastSeen.ifBlank { "" },
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
                     )
@@ -333,7 +335,8 @@ private fun MessageList(
     isReadByPeer: (Message) -> Boolean,
     windowClass: WindowWidthClass,
     peerAvatarUrl: String,
-    peerName: String
+    peerName: String,
+    isPeerTyping: Boolean = false
 ) {
     val hPadding = when (windowClass) {
         WindowWidthClass.Compact  -> 8.dp
@@ -344,15 +347,15 @@ private fun MessageList(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val bubbleMax = when (windowClass) {
-            WindowWidthClass.Compact  -> maxWidth * 0.72f
-            WindowWidthClass.Medium   -> maxWidth * 0.58f
-            WindowWidthClass.Expanded -> maxWidth * 0.43f
+            WindowWidthClass.Compact  -> maxWidth * 0.78f
+            WindowWidthClass.Medium   -> maxWidth * 0.65f
+            WindowWidthClass.Expanded -> maxWidth * 0.50f
         }
         LazyColumn(
             state               = listState,
             modifier            = Modifier.fillMaxSize().padding(horizontal = hPadding),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            contentPadding      = PaddingValues(vertical = 8.dp)
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+            contentPadding      = PaddingValues(vertical = 12.dp)
         ) {
             val grouped = messages.groupByDate()
             grouped.forEach { (label, dayMessages) ->
@@ -371,6 +374,16 @@ private fun MessageList(
                             peerName          = peerName
                         )
                     }
+                }
+            }
+            // Typing indicator — always last in the list
+            item(key = "typing_indicator") {
+                AnimatedVisibility(
+                    visible = isPeerTyping,
+                    enter   = slideInVertically { it / 2 } + fadeIn(),
+                    exit    = fadeOut()
+                ) {
+                    TypingIndicatorBubble(peerAvatarUrl = peerAvatarUrl, peerName = peerName)
                 }
             }
         }
@@ -415,12 +428,12 @@ private fun MessageBubble(
     Column(Modifier.fillMaxWidth()) {
         // Timestamp shown ABOVE bubble on tap
         AnimatedVisibility(showTime && timestamp != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut()) {
-            Box(Modifier.fillMaxWidth().padding(bottom = 2.dp), Alignment.Center) {
+            Box(Modifier.fillMaxWidth().padding(bottom = 3.dp), Alignment.Center) {
                 Text(
                     timestamp ?: "",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f),
-                        fontSize = 11.sp, textAlign = TextAlign.Center
+                        fontSize = 12.sp, textAlign = TextAlign.Center
                     )
                 )
             }
@@ -432,8 +445,8 @@ private fun MessageBubble(
             }
         } else {
             Row(Modifier.fillMaxWidth(), Arrangement.Start, Alignment.Bottom) {
-                Box(Modifier.padding(end = 6.dp, bottom = 2.dp)) {
-                    PeerAvatar(peerAvatarUrl, peerName, 28.dp, isOnline = false)
+                Box(Modifier.padding(end = 8.dp, bottom = 3.dp)) {
+                    PeerAvatar(peerAvatarUrl, peerName, 36.dp, isOnline = false)
                 }
                 ReceivedBubble(message, bubbleMaxWidth) { showTime = !showTime }
             }
@@ -453,28 +466,28 @@ private fun SentBubble(
 ) {
     val onlyEmoji  = remember(message.content) { message.content.isOnlyEmoji() }
     val count      = remember(message.content) { if (onlyEmoji) message.content.emojiCount() else 0 }
-    val bubbleShape = RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp)
+    val bubbleShape = RoundedCornerShape(20.dp, 5.dp, 20.dp, 20.dp)
 
     Column(horizontalAlignment = Alignment.End) {
         if (onlyEmoji) {
-            val fs = when { count == 1 -> 52.sp; count <= 3 -> 40.sp; count <= 6 -> 30.sp; else -> 22.sp }
+            val fs = when { count == 1 -> 78.sp; count <= 3 -> 60.sp; count <= 6 -> 45.sp; else -> 33.sp }
             Text(
                 message.content.trim(), fontSize = fs, textAlign = TextAlign.End,
                 modifier = Modifier.widthIn(max = bubbleMaxWidth)
                     .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                    .padding(4.dp)
+                    .padding(6.dp)
             )
         } else {
             Box(
-                modifier = Modifier.widthIn(64.dp, bubbleMaxWidth)
+                modifier = Modifier.widthIn(96.dp, bubbleMaxWidth)
                     .shadow(1.dp, bubbleShape).clip(bubbleShape)
                     .background(Color(0xFF005C4B))
                     .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .padding(horizontal = 15.dp, vertical = 10.dp)
             ) { BubbleContent(message, Color.White) }
         }
         if (isLastSentMessage && message.timestamp != null) {
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(3.dp))
             MessageStatusTick(isReadByPeer)
         }
     }
@@ -486,23 +499,23 @@ private fun SentBubble(
 private fun ReceivedBubble(message: Message, bubbleMaxWidth: Dp, onTap: () -> Unit) {
     val onlyEmoji  = remember(message.content) { message.content.isOnlyEmoji() }
     val count      = remember(message.content) { if (onlyEmoji) message.content.emojiCount() else 0 }
-    val bubbleShape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp)
+    val bubbleShape = RoundedCornerShape(5.dp, 20.dp, 20.dp, 20.dp)
 
     if (onlyEmoji) {
-        val fs = when { count == 1 -> 52.sp; count <= 3 -> 40.sp; count <= 6 -> 30.sp; else -> 22.sp }
+        val fs = when { count == 1 -> 78.sp; count <= 3 -> 60.sp; count <= 6 -> 45.sp; else -> 33.sp }
         Text(
             message.content.trim(), fontSize = fs, textAlign = TextAlign.Start,
             modifier = Modifier.widthIn(max = bubbleMaxWidth)
                 .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                .padding(4.dp)
+                .padding(6.dp)
         )
     } else {
         Box(
-            modifier = Modifier.widthIn(64.dp, bubbleMaxWidth)
+            modifier = Modifier.widthIn(96.dp, bubbleMaxWidth)
                 .shadow(1.dp, bubbleShape).clip(bubbleShape)
                 .background(MaterialTheme.colorScheme.surface)
                 .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                .padding(horizontal = 10.dp, vertical = 7.dp)
+                .padding(horizontal = 15.dp, vertical = 10.dp)
         ) { BubbleContent(message, MaterialTheme.colorScheme.onSurface) }
     }
 }
@@ -514,14 +527,91 @@ private fun BubbleContent(message: Message, textColor: Color) {
     Column {
         when (message.toType()) {
             MessageType.IMAGE -> Text("📷 Photo",
-                style = MaterialTheme.typography.bodyMedium.copy(color = textColor.copy(.80f), fontSize = 15.sp))
+                style = MaterialTheme.typography.bodyMedium.copy(color = textColor.copy(.80f), fontSize = 22.sp))
             else -> if (message.content.isNotEmpty())
                 Text(message.content,
-                    style = MaterialTheme.typography.bodyMedium.copy(color = textColor, fontSize = 15.sp))
+                    style = MaterialTheme.typography.bodyMedium.copy(color = textColor, fontSize = 22.sp))
         }
         if (message.isEdited) {
-            Spacer(Modifier.height(1.dp))
-            Text("edited", style = MaterialTheme.typography.labelSmall.copy(color = textColor.copy(.55f), fontSize = 10.sp))
+            Spacer(Modifier.height(2.dp))
+            Text("edited", style = MaterialTheme.typography.labelSmall.copy(color = textColor.copy(.55f), fontSize = 11.sp))
+        }
+    }
+}
+
+// ─── Typing Indicator Bubble ──────────────────────────────────────────────────
+
+/**
+ * Messenger-style three-dot typing indicator.
+ * Observes the peer's typing field at /messages/{conversationId}/{peerId}/typing
+ * via [ChatUiState.isPeerTyping] which the ViewModel keeps live.
+ */
+@Composable
+private fun TypingIndicatorBubble(peerAvatarUrl: String, peerName: String) {
+    val bubbleShape = RoundedCornerShape(5.dp, 20.dp, 20.dp, 20.dp)
+    val dotColor    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.60f)
+
+    // Three-dot staggered pulse animation
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "typing")
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f, targetValue = 1f, label = "d1",
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation  = androidx.compose.animation.core.keyframes {
+                durationMillis = 1200
+                0.25f at 0; 1f at 200; 0.25f at 500
+            },
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        )
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f, targetValue = 1f, label = "d2",
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation  = androidx.compose.animation.core.keyframes {
+                durationMillis = 1200
+                0.25f at 0; 0.25f at 150; 1f at 350; 0.25f at 650
+            },
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        )
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f, targetValue = 1f, label = "d3",
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation  = androidx.compose.animation.core.keyframes {
+                durationMillis = 1200
+                0.25f at 0; 0.25f at 300; 1f at 500; 0.25f at 800
+            },
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        )
+    )
+
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment     = Alignment.Bottom
+    ) {
+        Box(Modifier.padding(end = 8.dp, bottom = 3.dp)) {
+            PeerAvatar(peerAvatarUrl, peerName, 36.dp, isOnline = false)
+        }
+        Box(
+            modifier = Modifier
+                .shadow(1.dp, bubbleShape)
+                .clip(bubbleShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                listOf(dot1Alpha, dot2Alpha, dot3Alpha).forEach { alpha ->
+                    Box(
+                        Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(dotColor.copy(alpha = alpha))
+                    )
+                }
+            }
         }
     }
 }
