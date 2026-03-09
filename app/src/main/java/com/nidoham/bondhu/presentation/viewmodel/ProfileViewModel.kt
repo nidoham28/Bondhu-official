@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.nidoham.bondhu.data.repository.user.UserRepository
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,13 @@ class ProfileViewModel @Inject constructor(
 
     /** UID of the profile currently displayed. Null means "own profile". */
     private var currentProfileId: String? = null
+
+    /**
+     * Tracks the active presence-observation coroutine so we can cancel the
+     * previous one before starting a new one (avoids multiple collectors leaking
+     * whenever [loadProfile] / [refreshProfile] is called).
+     */
+    private var presenceJob: Job? = null
 
     // ─────────────────────────────────────────────────────────────
     // Public API
@@ -111,7 +119,7 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    /** Clears the current error so the Snackbar dismisses. */ // ← fixed typo
+    /** Clears the current error so the Snackbar dismisses. */
     fun clearError() = _uiState.update { it.copy(error = null) }
 
     // ─────────────────────────────────────────────────────────────
@@ -129,13 +137,14 @@ class ProfileViewModel @Inject constructor(
                 val user = if (isOwner) {
                     userRepository.getCurrentUserProfile()
                 } else {
-                    userRepository.getUserProfile(profileUserId) // ← removed unnecessary !!
+                    userRepository.getUserProfile(profileUserId)
                 } ?: throw NoSuchElementException("User not found.")
 
                 val isFollowing = if (!isOwner && currentUid != null) {
                     userRepository.isFollowing(user.uid)
                 } else false
 
+                // Cancel any previous presence collector before starting a fresh one.
                 observeOnlineStatus(user.uid)
 
                 _uiState.update { state ->
@@ -160,10 +169,20 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Observes the real-time online/offline status for [uid] via [PresenceManager].
+     *
+     * Uses [userRepository.observeUserPresence] (backed by Firebase Realtime Database)
+     * instead of the Firestore user-doc observer, which is not designed for presence tracking.
+     *
+     * The previous [presenceJob] is cancelled before starting a new collector so that
+     * switching profiles never leaves a stale coroutine running in the background.
+     */
     private fun observeOnlineStatus(uid: String) {
-        viewModelScope.launch {
-            userRepository.observeCurrentUser(uid).collect { user ->
-                _isTargetOnline.value = user?.isOnline ?: false
+        presenceJob?.cancel()
+        presenceJob = viewModelScope.launch {
+            userRepository.observeUserPresence(uid).collect { status ->
+                _isTargetOnline.value = status.online
             }
         }
     }

@@ -6,6 +6,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import org.nidoham.server.data.repository.FriendshipManager
+import org.nidoham.server.data.repository.PresenceManager
 import org.nidoham.server.data.repository.SettingsManager
 import org.nidoham.server.data.repository.UserManager
 import org.nidoham.server.domain.model.Follower
@@ -17,7 +18,7 @@ import javax.inject.Singleton
 /**
  * Single source of truth for all user-related operations.
  *
- * Orchestrates [UserManager], [FriendshipManager], and [SettingsManager]
+ * Orchestrates [UserManager], [FriendshipManager], [SettingsManager], and [PresenceManager]
  * so that ViewModels interact with one cohesive API.
  */
 @Singleton
@@ -25,7 +26,8 @@ class UserRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val userManager: UserManager,
     private val friendshipManager: FriendshipManager,
-    private val settingsManager: SettingsManager
+    private val settingsManager: SettingsManager,
+    private val presenceManager: PresenceManager // INJECTED PRESENCE MANAGER
 ) {
 
     // ==========================================
@@ -225,5 +227,19 @@ class UserRepository @Inject constructor(
     suspend fun updateSettings(updates: Map<String, Any>): Result<Unit> {
         val id = requireUserId().getOrElse { return Result.failure(it) }
         return settingsManager.updateSettings(id, updates)
+    }
+
+    // ==========================================
+    // Presence / Online Status
+    // ==========================================
+
+    /**
+     * Returns a real-time [Flow] of any user's online/offline status and last seen timestamp.
+     * Emits a safe default if the [uid] is blank or an error occurs.
+     *
+     * @param uid The UID of the user you want to observe (e.g., a friend from the chat list).
+     */
+    fun observeUserPresence(uid: String): Flow<PresenceManager.UserStatus> {
+        return presenceManager.observeUserStatus(uid)
     }
 }

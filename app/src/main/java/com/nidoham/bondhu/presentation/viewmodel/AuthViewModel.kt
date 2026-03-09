@@ -1,7 +1,6 @@
 package com.nidoham.bondhu.presentation.viewmodel
 
 import android.content.Context
-import android.net.Uri
 import android.util.Patterns
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
@@ -25,6 +24,7 @@ import java.util.UUID
 import javax.inject.Inject
 import androidx.core.net.toUri
 import org.nidoham.server.data.api.GoogleAuthHelper
+import org.nidoham.server.data.repository.PresenceManager
 
 sealed interface AuthState {
     data object Idle : AuthState
@@ -39,7 +39,8 @@ class AuthViewModel @Inject constructor(
     private val auth: FirebaseAuth,
     private val googleAuthHelper: GoogleAuthHelper,
     private val userRepository: UserRepository,
-    @ApplicationContext private val context: Context
+    private val presenceManager: PresenceManager,
+    @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val prefs = context.getSharedPreferences("MyPrefs", Context.MODE_PRIVATE)
@@ -53,7 +54,6 @@ class AuthViewModel @Inject constructor(
     val isAuthenticated: Boolean
         get() = auth.currentUser != null
 
-    // FIX: Check profile completion specifically for the current user ID
     val isProfileCompleted: Boolean
         get() {
             val uid = auth.currentUser?.uid ?: return false
@@ -169,6 +169,10 @@ class AuthViewModel @Inject constructor(
             return
         }
 
+        // FIX: Removed incorrect presenceManager.onUserLogin() call here.
+        // Presence is already managed by the AuthStateListener in PresenceManager.init{}.
+        // Calling onUserLogin() mid-session is redundant and resets the connection listener.
+
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
@@ -190,15 +194,18 @@ class AuthViewModel @Inject constructor(
                     )
                 }
 
-                // FIX: Set profile completed to true ONLY here, and specifically for this user
                 setProfileCompleted(true)
 
                 user.reload().await()
+
+                // FIX: Use auth.currentUser (post-reload) instead of the stale local 'user'
+                // reference, and emit it as AuthState.Success so the UI reflects the
+                // refreshed display name / photo URL immediately.
                 val refreshedUser = auth.currentUser
                     ?: throw Exception("User was null after profile reload")
 
                 Timber.i("Profile updated — uid: ${user.uid}")
-                _authState.value = AuthState.ActionSuccess("Profile updated successfully")
+                _authState.value = AuthState.Success(refreshedUser)
 
             } catch (e: Exception) {
                 Timber.e(e, "Profile update failed")
@@ -207,19 +214,18 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    // FIX: Helper function to get the specific key for the current user
     private fun getProfileKey(): String {
         val uid = auth.currentUser?.uid ?: return "profileCompleted_null"
         return "profileCompleted_$uid"
     }
 
-    // FIX: Set the value for the specific user key
     fun setProfileCompleted(completed: Boolean) {
         val key = getProfileKey()
         prefs.edit { putBoolean(key, completed) }
         Timber.d("Profile completed set to: $completed for key: $key")
     }
 
+    @Suppress("unused")
     fun deleteAccount() {
         val user = auth.currentUser
         if (user == null) {
@@ -227,20 +233,30 @@ class AuthViewModel @Inject constructor(
             return
         }
 
+        // FIX: Capture uid before deletion. After user.delete(), auth.currentUser becomes
+        // null, so getProfileKey() would return "profileCompleted_null" and clear the
+        // wrong SharedPreferences key.
+        val uidToDelete = user.uid
+
+        // FIX: Changed onUserLogin() → onUserLogout(). The account is being permanently
+        // deleted; we must mark the user offline and tear down the presence listener,
+        // not re-initialize it.
+        presenceManager.onUserLogout()
+
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
                 val softDeleteResult = userRepository.updateProfile(mapOf("isBanned" to true))
                 if (softDeleteResult.isFailure) {
-                    Timber.w(softDeleteResult.exceptionOrNull(), "Soft-delete failed for uid: ${user.uid}, proceeding with hard delete")
+                    Timber.w(softDeleteResult.exceptionOrNull(), "Soft-delete failed for uid: $uidToDelete, proceeding with hard delete")
                 }
 
                 user.delete().await()
 
-                // Clear the flag for this specific user upon deletion
-                setProfileCompleted(false)
+                // Clear the flag using the uid captured before deletion
+                prefs.edit { putBoolean("profileCompleted_$uidToDelete", false) }
 
-                Timber.i("Account deleted — uid: ${user.uid}")
+                Timber.i("Account deleted — uid: $uidToDelete")
                 _authState.value = AuthState.ActionSuccess("Account deleted successfully")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete account — may require re-authentication")
@@ -251,8 +267,14 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    @Suppress("unused")
     fun signOut() {
         Timber.i("Signing out — uid: ${auth.currentUser?.uid}")
+
+        // FIX: Changed onUserLogin() → onUserLogout(). The user is signing out, so we
+        // must mark them offline and clean up the presence listener, not re-initialize it.
+        presenceManager.onUserLogout()
+
         auth.signOut()
         _authState.value = AuthState.Idle
         // Note: We do NOT reset profileCompleted here.
