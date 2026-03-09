@@ -38,7 +38,6 @@ class BondhuApp : Application() {
         // 1. Force instantiation of PresenceManager to start tracking instantly.
         // This ensures the init{} block inside PresenceManager runs safely.
         presenceManager.initialize()
-        FirebaseDatabase.getInstance().setPersistenceEnabled(true)
 
         // 2. Initialize Timber for debugging
         if (BuildConfig.DEBUG) {
