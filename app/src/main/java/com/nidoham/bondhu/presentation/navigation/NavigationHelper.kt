@@ -3,6 +3,7 @@ package com.nidoham.bondhu.presentation.navigation
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import com.nidoham.bondhu.ChatActivity
 import com.nidoham.bondhu.CompleteProfileActivity
 import com.nidoham.bondhu.ForgotPasswordActivity
 import com.nidoham.bondhu.LoginActivity
@@ -12,29 +13,22 @@ import com.nidoham.bondhu.RegisterActivity
 
 object NavigationHelper {
 
-    // Moved here from CompleteProfileActivity.companion — that class no longer defines it
-    private const val EXTRA_USER_ID = "extra_user_id"
+    // Intent extras
+    private const val EXTRA_USER_ID         = "extra_user_id"
+    const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"  // read by ChatActivity
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Region: Transitions
+    // Transitions
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun fadeTransition(context: Context): ActivityOptions =
-        ActivityOptions.makeCustomAnimation(
-            context,
-            R.anim.fade_in,
-            R.anim.fade_out
-        )
+        ActivityOptions.makeCustomAnimation(context, R.anim.fade_in, R.anim.fade_out)
 
     private fun slideTransition(context: Context): ActivityOptions =
-        ActivityOptions.makeCustomAnimation(
-            context,
-            R.anim.slide_in_right,
-            R.anim.slide_out_left
-        )
+        ActivityOptions.makeCustomAnimation(context, R.anim.slide_in_right, R.anim.slide_out_left)
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Region: Core
+    // Core launcher
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun launch(
@@ -50,7 +44,7 @@ object NavigationHelper {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Region: Destinations
+    // Destinations
     // ─────────────────────────────────────────────────────────────────────────
 
     fun navigateToMain(context: Context) = launch(
@@ -75,18 +69,11 @@ object NavigationHelper {
     fun registerIntent(context: Context): Intent =
         Intent(context, RegisterActivity::class.java)
 
-    fun navigateToUpdateProfile(
-        context: Context,
-        userId: String? = null
-    ) {
+    fun navigateToUpdateProfile(context: Context, userId: String? = null) {
         val intent = Intent(context, CompleteProfileActivity::class.java).apply {
             userId?.let { putExtra(EXTRA_USER_ID, it) }
         }
-        launch(
-            context    = context,
-            intent     = intent,
-            transition = slideTransition(context)
-        )
+        launch(context = context, intent = intent, transition = slideTransition(context))
     }
 
     fun navigateToForgotPassword(context: Context) = launch(
@@ -94,4 +81,20 @@ object NavigationHelper {
         intent     = Intent(context, ForgotPasswordActivity::class.java),
         transition = slideTransition(context)
     )
+
+    /**
+     * Opens [ChatActivity] for the given [conversationId].
+     *
+     * ChatActivity reads the ID via:
+     *   val conversationId = intent.getStringExtra(NavigationHelper.EXTRA_CONVERSATION_ID) ?: ""
+     *
+     * Uses a slide transition — feels natural when entering a chat from a profile.
+     */
+    fun navigateToChat(context: Context, conversationId: String) {
+        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        val intent = Intent(context, ChatActivity::class.java).apply {
+            putExtra(EXTRA_CONVERSATION_ID, conversationId)
+        }
+        launch(context = context, intent = intent, transition = slideTransition(context))
+    }
 }

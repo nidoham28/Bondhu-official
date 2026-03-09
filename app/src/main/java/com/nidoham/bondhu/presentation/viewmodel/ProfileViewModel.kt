@@ -2,6 +2,7 @@ package com.nidoham.bondhu.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nidoham.bondhu.data.repository.message.MessageRepository
 import com.nidoham.bondhu.data.repository.user.UserRepository
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -11,11 +12,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.nidoham.server.domain.model.ConversationType
 import javax.inject.Inject
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val messageRepository: MessageRepository  // Fixed: injected, was missing entirely
 ) : ViewModel() {
 
     // ─────────────────────────────────────────────────────────────
@@ -99,23 +102,60 @@ class ProfileViewModel @Inject constructor(
     }
 
     /**
-     * Starts or fetches an existing conversation with the currently viewed user.
-     * Calls [onConversationReady] with the conversation / channel ID on success.
+     * Finds an existing private conversation between the signed-in user and
+     * [targetUserId]. If none exists, creates one. Calls [onConversationReady]
+     * with the resolved conversationId so the caller can open ChatActivity.
+     *
+     * Flow:
+     *   1. Guard against double-tap / re-entry via [isMessageLoading].
+     *   2. Resolve the current user's UID from [userRepository].
+     *   3. Call [messageRepository.createConversation] which internally:
+     *        a. Checks for an existing PRIVATE conversation (find-or-create).
+     *        b. Creates a new one if none exists.
+     *   4. Deliver the conversationId via [onConversationReady].
+     *   5. On any failure, surface the error in the snackbar and reset loading.
      */
     fun startConversation(targetUserId: String, onConversationReady: (String) -> Unit) {
+        // Fixed: was missing the loading guard reset on failure and had a TODO placeholder
         if (_uiState.value.isMessageLoading) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isMessageLoading = true) }
-            // TODO: wire up your MessageRepository / ChatRepository here.
-            // Example:
-            //   val result = messageRepository.getOrCreateConversation(targetUserId)
-            //   result.fold(
-            //       onSuccess = { conversationId -> onConversationReady(conversationId) },
-            //       onFailure = { error -> _uiState.update { it.copy(error = error.message) } }
-            //   )
-            onConversationReady(targetUserId) // placeholder — remove once real repo is wired
-            _uiState.update { it.copy(isMessageLoading = false) }
+            _uiState.update { it.copy(isMessageLoading = true, error = null) }
+
+            runCatching {
+                // Step 1 — Resolve current user
+                val currentUserId = userRepository.getCurrentUserId()
+                    ?: throw IllegalStateException("Not signed in.")
+
+                // Step 2 — Resolve target user's display name for conversation title.
+                //           Falls back to a sensible default so the title is never blank.
+                val targetUser = userRepository.getUserProfile(targetUserId)
+                val title = targetUser?.displayName?.takeIf { it.isNotBlank() }
+                    ?: targetUser?.username?.takeIf { it.isNotBlank() }
+                    ?: "Chat"
+
+                // Step 3 — Find existing private conversation or create a new one.
+                //           MessageRepository.createConversation deduplicates automatically.
+                val conversation = messageRepository.createConversation(
+                    creatorId             = currentUserId,
+                    title                 = title,
+                    type                  = ConversationType.PRIVATE,
+                    initialParticipantIds = listOf(currentUserId, targetUserId)
+                ).getOrThrow()
+
+                // Step 4 — Deliver conversationId to the caller
+                onConversationReady(conversation.conversationId)
+            }.onSuccess {
+                _uiState.update { it.copy(isMessageLoading = false) }
+            }.onFailure { error ->
+                // Fixed: loading flag was never reset inside the old TODO block on failure
+                _uiState.update {
+                    it.copy(
+                        isMessageLoading = false,
+                        error = error.message ?: "Could not open conversation."
+                    )
+                }
+            }
         }
     }
 

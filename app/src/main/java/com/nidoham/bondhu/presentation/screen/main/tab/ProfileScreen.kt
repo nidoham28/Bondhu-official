@@ -35,14 +35,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.nidoham.bondhu.presentation.component.profile.PostItem
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
+import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.viewmodel.ProfileViewModel
 import org.nidoham.server.domain.model.User
 
@@ -56,19 +58,22 @@ fun ProfileScreen(
     onNavigateBack: () -> Unit = {},
     onEditProfile: () -> Unit = {},
     onShareProfile: () -> Unit = {},
-    onMessage: (String) -> Unit = {},
+    // Fixed: caller no longer needs to handle routing — NavigationHelper does it internally.
+    // onMessage is kept as an optional hook for NavGraph-based callers; defaults to no-op.
+    onMessage: ((String) -> Unit)? = null,
     viewModel: ProfileViewModel = hiltViewModel()
 ) {
     val uiState  by viewModel.uiState.collectAsState()
     val isOnline by viewModel.isTargetOnline.collectAsState()
+    val context  = LocalContext.current                       // Fixed: needed for NavigationHelper
     val snackbarHostState = remember { SnackbarHostState() }
 
     val isDataStale = remember(uiState.user, uiState.isOwner, profileUserId) {
         val user = uiState.user
         when {
-            user == null                    -> false
+            user == null                   -> false
             !profileUserId.isNullOrBlank() -> user.uid != profileUserId
-            else                            -> !uiState.isOwner
+            else                           -> !uiState.isOwner
         }
     }
 
@@ -116,9 +121,9 @@ fun ProfileScreen(
             }
 
             AnimatedContent(
-                targetState  = screenState,
+                targetState    = screenState,
                 transitionSpec = { screenTransitionSpec() },
-                label        = "ProfileScreenTransition"
+                label          = "ProfileScreenTransition"
             ) { state ->
                 when (state) {
                     is ScreenState.Loading -> ProfileShimmerLoading()
@@ -132,8 +137,18 @@ fun ProfileScreen(
                             else viewModel.toggleFollow()
                         },
                         onSecondaryClick = {
-                            if (uiState.isOwner) onShareProfile()
-                            else viewModel.startConversation(state.user.uid) { onMessage(it) }
+                            if (uiState.isOwner) {
+                                onShareProfile()
+                            } else {
+                                // Fixed: ViewModel fetches current user + resolves/creates
+                                // the conversation, then we navigate to ChatActivity.
+                                viewModel.startConversation(state.user.uid) { conversationId ->
+                                    // Primary route: open ChatActivity directly via NavigationHelper
+                                    NavigationHelper.navigateToChat(context, conversationId)
+                                    // Secondary hook: notify NavGraph caller if provided
+                                    onMessage?.invoke(conversationId)
+                                }
+                            }
                         }
                     )
 
@@ -207,10 +222,10 @@ private fun ProfileShimmerLoading() {
 
 @Composable
 private fun Modifier.shimmerEffect(): Modifier {
-    val transition  = rememberInfiniteTransition(label = "ShimmerTransition")
+    val transition    = rememberInfiniteTransition(label = "ShimmerTransition")
     val translateAnim by transition.animateFloat(
-        initialValue = -400f,
-        targetValue  = 1200f,
+        initialValue  = -400f,
+        targetValue   = 1200f,
         animationSpec = infiniteRepeatable(
             animation  = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
@@ -238,7 +253,7 @@ private fun Modifier.shimmerEffect(): Modifier {
 @Composable
 private fun ErrorScreen(error: String, onRetry: () -> Unit, onNavigateBack: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier            = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -300,11 +315,11 @@ private fun ProfileContent(
 @Composable
 private fun ProfileTopBar(title: String, onNavigateBack: () -> Unit) {
     Surface(
-        color            = MaterialTheme.colorScheme.background,
-        shadowElevation  = if (title == "Loading...") 0.dp else 4.dp
+        color           = MaterialTheme.colorScheme.background,
+        shadowElevation = if (title == "Loading...") 0.dp else 4.dp
     ) {
         Row(
-            modifier = Modifier
+            modifier              = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 12.dp),
@@ -347,7 +362,7 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
                 )
             } else {
                 Box(
-                    modifier        = Modifier.size(100.dp).clip(CircleShape)
+                    modifier         = Modifier.size(100.dp).clip(CircleShape)
                         .background(Brush.linearGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6)))),
                     contentAlignment = Alignment.Center
                 ) {
@@ -379,7 +394,6 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
 
         Spacer(Modifier.height(4.dp))
 
-        // ✅ Uses ViewModel-provided isOnline — no blocking calls, no repo in UI
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             Box(
                 modifier = Modifier.size(8.dp).clip(CircleShape).background(
@@ -388,9 +402,9 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text  = if (isOnline) "Online" else "Offline",
+                text     = if (isOnline) "Online" else "Offline",
                 fontSize = 13.sp,
-                color = if (isOnline) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
+                color    = if (isOnline) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 

@@ -1,33 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
     <!-- ══════════════════════ PERMISSIONS ══════════════════════ -->
-
     <!-- Core network permissions — required for Firebase + API calls -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
     <!--
         POST_NOTIFICATIONS — required on Android 13+ (API 33+) to show
         FCM push notifications. The app must also request this at runtime.
     -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Image/Media permissions for ImageCompressor -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" /> <!-- Image/Media permissions for ImageCompressor -->
     <!-- Android 13+ (API 33+) granular media permissions -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-
-    <!-- Android 12 and below -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" /> <!-- Android 12 and below -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-
-    <!-- Camera permission (if taking photos) -->
-    <uses-permission android:name="android.permission.CAMERA" />
-
-    <!-- Optional: Hardware feature declaration -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" /> <!-- Camera permission (if taking photos) -->
+    <uses-permission android:name="android.permission.CAMERA" /> <!-- Optional: Hardware feature declaration -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
@@ -44,48 +35,38 @@
         android:theme="@style/Theme.Bondhu"
         android:usesCleartextTraffic="false"
         tools:targetApi="31">
-
+        <activity
+            android:name=".ChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <!-- ══════════════════════ ACTIVITIES ══════════════════════ -->
-
         <activity
             android:name=".SplashActivity"
             android:exported="true"
             android:theme="@style/Theme.Bondhu.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
         <activity
             android:name=".MainActivity"
             android:exported="false"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".ChatActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
         <activity
             android:name=".LoginActivity"
             android:exported="false" />
-
         <activity
             android:name=".RegisterActivity"
             android:exported="false" />
-
         <activity
             android:name=".ForgotPasswordActivity"
             android:exported="false" />
-
         <activity
             android:name=".CompleteProfileActivity"
-            android:exported="false" />
-
-        <!-- ══════════════════════ FILE PROVIDER ══════════════════════ -->
-
+            android:exported="false" /> <!-- ══════════════════════ FILE PROVIDER ══════════════════════ -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileProvider"
@@ -95,7 +76,6 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-
     </application>
 
 </manifest>
