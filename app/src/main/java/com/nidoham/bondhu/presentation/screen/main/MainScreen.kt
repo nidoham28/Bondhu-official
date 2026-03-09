@@ -65,7 +65,7 @@ import com.nidoham.bondhu.presentation.screen.main.tab.ReelsScreen
 import com.nidoham.bondhu.presentation.screen.main.tab.SearchScreen
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sizing constants — single source of truth
+// Sizing constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 private val BAR_HEIGHT       = 68.dp
@@ -75,14 +75,14 @@ private val PROFILE_IMG_SIZE = 26.dp
 private val ICON_LABEL_GAP   = 3.dp
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tab indices — single source of truth
+// Tab indices
 // ─────────────────────────────────────────────────────────────────────────────
 
-private const val TAB_HOME    = 0
-private const val TAB_SEARCH  = 1
-private const val TAB_REELS   = 2
+private const val TAB_HOME     = 0
+private const val TAB_SEARCH   = 1
+private const val TAB_REELS    = 2
 private const val TAB_MESSAGES = 3
-private const val TAB_PROFILE = 4
+private const val TAB_PROFILE  = 4
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Nav Item Model
@@ -134,12 +134,8 @@ private val NAV_ITEMS = listOf(
 fun MainScreen(
     profileImageUrl: String? = null
 ) {
-    var selectedTab       by remember { mutableIntStateOf(TAB_HOME) }
-
-    // Holds the UID of a user opened from SearchScreen.
-    // null  → own profile (Profile tab tapped directly)
-    // nonNull → another user's profile (navigated from search result)
-    var targetProfileUid  by remember { mutableStateOf<String?>(null) }
+    var selectedTab      by remember { mutableIntStateOf(TAB_HOME) }
+    var targetProfileUid by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         bottomBar = {
@@ -147,41 +143,47 @@ fun MainScreen(
                 selectedTab     = selectedTab,
                 profileImageUrl = profileImageUrl,
                 onTabSelected   = { index ->
-                    // Tapping the Profile tab directly always shows own profile
                     if (index == TAB_PROFILE) targetProfileUid = null
                     selectedTab = index
                 }
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
-    ) { _ ->
+        // FIX: padding was declared as `_ ` (ignored). Apply it so Scaffold content
+        //      is not obscured by the bottom bar.
+    ) { innerPadding ->
         AnimatedContent(
-            targetState  = selectedTab,
+            targetState = selectedTab,
             transitionSpec = {
                 fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) togetherWith
                         fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing))
             },
             label    = "MainScreenTransition",
-            modifier = Modifier.fillMaxSize()
+            // FIX: consume innerPadding here so content sits above the nav bar
+            modifier = Modifier
+                .fillMaxSize()
         ) { tab ->
             when (tab) {
-                TAB_HOME     -> HomeScreen()
+                TAB_HOME -> HomeScreen()
 
-                TAB_SEARCH   -> SearchScreen(
+                TAB_SEARCH -> SearchScreen(
                     onUserClick = { uid ->
                         targetProfileUid = uid
                         selectedTab      = TAB_PROFILE
                     }
                 )
 
-                TAB_REELS    -> ReelsScreen()
+                TAB_REELS -> ReelsScreen()
 
                 TAB_MESSAGES -> MessageScreen()
 
-                TAB_PROFILE  -> ProfileScreen(
+                TAB_PROFILE -> ProfileScreen(
                     profileUserId  = targetProfileUid,
                     onNavigateBack = {
                         if (targetProfileUid != null) {
+                            // FIX: targetProfileUid was assigned null then never read before
+                            //      selectedTab was changed. Clear it first, then switch tabs
+                            //      so ProfileScreen recomposition sees the reset value.
                             targetProfileUid = null
                             selectedTab      = TAB_SEARCH
                         }

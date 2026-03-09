@@ -18,8 +18,6 @@ class MainActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-
         setContent {
             AppTheme {
                 val profileImageUrl by viewModel.profileImageUrl.collectAsStateWithLifecycle()
