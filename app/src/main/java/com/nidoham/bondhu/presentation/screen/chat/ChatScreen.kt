@@ -129,8 +129,6 @@ private fun Dp.toWindowWidthClass(): WindowWidthClass = when {
 }
 
 // ─── Emoji Recent List (runtime state) ───────────────────────────────────────
-// All emoji data (EmojiCategory, EMOJI_CATEGORIES, helpers) live in EmojiData.kt.
-// Only the mutable recent list is kept here because it changes during the session.
 
 private val recentEmojis: MutableList<String> = DEFAULT_RECENT_EMOJIS.toMutableList()
 
@@ -272,12 +270,15 @@ private fun ChatTopBar(
                     ),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text  = if (isOnline) "active" else lastSeen.ifBlank { "" },
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
+                val lastSeenLabel = if (isOnline) "active" else formatLastSeen(lastSeen)
+                if (lastSeenLabel.isNotEmpty()) {
+                    Text(
+                        text  = lastSeenLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
+                        )
                     )
-                )
+                }
             }
         },
         actions = {
@@ -376,7 +377,6 @@ private fun MessageList(
                     }
                 }
             }
-            // Typing indicator — always last in the list
             item(key = "typing_indicator") {
                 AnimatedVisibility(
                     visible = isPeerTyping,
@@ -426,27 +426,36 @@ private fun MessageBubble(
     if (message.deleted) { DeletedMessageBubble(isMine); return }
 
     Column(Modifier.fillMaxWidth()) {
-        // Timestamp shown ABOVE bubble on tap
         AnimatedVisibility(showTime && timestamp != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut()) {
             Box(Modifier.fillMaxWidth().padding(bottom = 3.dp), Alignment.Center) {
                 Text(
                     timestamp ?: "",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f),
-                        fontSize = 12.sp, textAlign = TextAlign.Center
+                        fontSize = 11.sp, textAlign = TextAlign.Center
                     )
                 )
             }
         }
 
         if (isMine) {
-            Row(Modifier.fillMaxWidth(), Arrangement.End, Alignment.Bottom) {
+            // Sent → pinned to the RIGHT
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment     = Alignment.Bottom
+            ) {
                 SentBubble(message, isLastSentMessage, isReadByPeer, bubbleMaxWidth) { showTime = !showTime }
             }
         } else {
-            Row(Modifier.fillMaxWidth(), Arrangement.Start, Alignment.Bottom) {
-                Box(Modifier.padding(end = 8.dp, bottom = 3.dp)) {
-                    PeerAvatar(peerAvatarUrl, peerName, 36.dp, isOnline = false)
+            // Received → pinned to the LEFT
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment     = Alignment.Bottom
+            ) {
+                Box(Modifier.padding(end = 6.dp, bottom = 2.dp)) {
+                    PeerAvatar(peerAvatarUrl, peerName, 29.dp, isOnline = false)
                 }
                 ReceivedBubble(message, bubbleMaxWidth) { showTime = !showTime }
             }
@@ -470,20 +479,22 @@ private fun SentBubble(
 
     Column(horizontalAlignment = Alignment.End) {
         if (onlyEmoji) {
-            val fs = when { count == 1 -> 78.sp; count <= 3 -> 60.sp; count <= 6 -> 45.sp; else -> 33.sp }
+            // ── +10%: 62→68, 48→53, 36→40, 26→29 sp
+            val fs = when { count == 1 -> 68.sp; count <= 3 -> 53.sp; count <= 6 -> 40.sp; else -> 29.sp }
             Text(
                 message.content.trim(), fontSize = fs, textAlign = TextAlign.End,
                 modifier = Modifier.widthIn(max = bubbleMaxWidth)
                     .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                    .padding(6.dp)
+                    .padding(5.dp)
             )
         } else {
             Box(
-                modifier = Modifier.widthIn(96.dp, bubbleMaxWidth)
+                modifier         = Modifier.widthIn(60.dp, bubbleMaxWidth)
                     .shadow(1.dp, bubbleShape).clip(bubbleShape)
                     .background(Color(0xFF005C4B))
                     .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                    .padding(horizontal = 15.dp, vertical = 10.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
             ) { BubbleContent(message, Color.White) }
         }
         if (isLastSentMessage && message.timestamp != null) {
@@ -502,20 +513,22 @@ private fun ReceivedBubble(message: Message, bubbleMaxWidth: Dp, onTap: () -> Un
     val bubbleShape = RoundedCornerShape(5.dp, 20.dp, 20.dp, 20.dp)
 
     if (onlyEmoji) {
-        val fs = when { count == 1 -> 78.sp; count <= 3 -> 60.sp; count <= 6 -> 45.sp; else -> 33.sp }
+        // ── +10%: 62→68, 48→53, 36→40, 26→29 sp
+        val fs = when { count == 1 -> 68.sp; count <= 3 -> 53.sp; count <= 6 -> 40.sp; else -> 29.sp }
         Text(
             message.content.trim(), fontSize = fs, textAlign = TextAlign.Start,
             modifier = Modifier.widthIn(max = bubbleMaxWidth)
                 .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                .padding(6.dp)
+                .padding(5.dp)
         )
     } else {
         Box(
-            modifier = Modifier.widthIn(96.dp, bubbleMaxWidth)
+            modifier         = Modifier.widthIn(60.dp, bubbleMaxWidth)
                 .shadow(1.dp, bubbleShape).clip(bubbleShape)
                 .background(MaterialTheme.colorScheme.surface)
                 .clickable(remember<MutableInteractionSource> { MutableInteractionSource() }, null, onClick = onTap)
-                .padding(horizontal = 15.dp, vertical = 10.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
         ) { BubbleContent(message, MaterialTheme.colorScheme.onSurface) }
     }
 }
@@ -524,34 +537,40 @@ private fun ReceivedBubble(message: Message, bubbleMaxWidth: Dp, onTap: () -> Un
 
 @Composable
 private fun BubbleContent(message: Message, textColor: Color) {
-    Column {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         when (message.toType()) {
-            MessageType.IMAGE -> Text("📷 Photo",
-                style = MaterialTheme.typography.bodyMedium.copy(color = textColor.copy(.80f), fontSize = 22.sp))
+            MessageType.IMAGE -> Text(
+                "📷 Photo",
+                textAlign = TextAlign.Center,
+                // ── +10%: 18→20 sp
+                style = MaterialTheme.typography.bodyMedium.copy(color = textColor.copy(.80f), fontSize = 20.sp)
+            )
             else -> if (message.content.isNotEmpty())
-                Text(message.content,
-                    style = MaterialTheme.typography.bodyMedium.copy(color = textColor, fontSize = 22.sp))
+                Text(
+                    message.content,
+                    textAlign = TextAlign.Center,
+                    // ── +10%: 18→20 sp
+                    style = MaterialTheme.typography.bodyMedium.copy(color = textColor, fontSize = 20.sp)
+                )
         }
         if (message.isEdited) {
             Spacer(Modifier.height(2.dp))
-            Text("edited", style = MaterialTheme.typography.labelSmall.copy(color = textColor.copy(.55f), fontSize = 11.sp))
+            Text(
+                "edited",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall.copy(color = textColor.copy(.55f), fontSize = 9.sp)
+            )
         }
     }
 }
 
 // ─── Typing Indicator Bubble ──────────────────────────────────────────────────
 
-/**
- * Messenger-style three-dot typing indicator.
- * Observes the peer's typing field at /messages/{conversationId}/{peerId}/typing
- * via [ChatUiState.isPeerTyping] which the ViewModel keeps live.
- */
 @Composable
 private fun TypingIndicatorBubble(peerAvatarUrl: String, peerName: String) {
     val bubbleShape = RoundedCornerShape(5.dp, 20.dp, 20.dp, 20.dp)
     val dotColor    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.60f)
 
-    // Three-dot staggered pulse animation
     val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "typing")
     val dot1Alpha by infiniteTransition.animateFloat(
         initialValue = 0.25f, targetValue = 1f, label = "d1",
@@ -589,24 +608,24 @@ private fun TypingIndicatorBubble(peerAvatarUrl: String, peerName: String) {
         horizontalArrangement = Arrangement.Start,
         verticalAlignment     = Alignment.Bottom
     ) {
-        Box(Modifier.padding(end = 8.dp, bottom = 3.dp)) {
-            PeerAvatar(peerAvatarUrl, peerName, 36.dp, isOnline = false)
+        Box(Modifier.padding(end = 6.dp, bottom = 2.dp)) {
+            PeerAvatar(peerAvatarUrl, peerName, 29.dp, isOnline = false)
         }
         Box(
             modifier = Modifier
                 .shadow(1.dp, bubbleShape)
                 .clip(bubbleShape)
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .padding(horizontal = 14.dp, vertical = 11.dp)
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment     = Alignment.CenterVertically
             ) {
                 listOf(dot1Alpha, dot2Alpha, dot3Alpha).forEach { alpha ->
                     Box(
                         Modifier
-                            .size(9.dp)
+                            .size(7.dp)
                             .clip(CircleShape)
                             .background(dotColor.copy(alpha = alpha))
                     )
@@ -778,7 +797,6 @@ private fun EmojiBottomSheet(
     var query          by remember { mutableStateOf("") }
     var selectedCatIdx by remember { mutableIntStateOf(0) }
 
-    // Prepend live recent list as category 0
     val allCategories = remember<List<EmojiCategory>> {
         listOf(EmojiCategory("Recent", "🕐", emptyList())) + EMOJI_CATEGORIES
     }
@@ -803,7 +821,6 @@ private fun EmojiBottomSheet(
     ) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
 
-            // ── Search ────────────────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(12.dp)).background(searchBg)
@@ -833,7 +850,6 @@ private fun EmojiBottomSheet(
                 )
             }
 
-            // ── Category tabs (hidden during search) ──────────────────────
             AnimatedVisibility(query.isBlank()) {
                 Column {
                     LazyRow(
@@ -866,7 +882,6 @@ private fun EmojiBottomSheet(
                 }
             }
 
-            // ── Section label ────────────────────────────────────────────
             val label = if (query.isNotBlank()) "Search results"
             else allCategories.getOrNull(selectedCatIdx)?.label ?: ""
             Text(
@@ -880,7 +895,6 @@ private fun EmojiBottomSheet(
                 )
             )
 
-            // ── Emoji grid ────────────────────────────────────────────────
             if (displayedEmojis.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) {
                     Text(
@@ -938,6 +952,29 @@ private fun ChatWallpaper() {
 private fun Date.toTimeString(): String =
     SimpleDateFormat("h:mm a", Locale.getDefault()).format(this)
 
+/**
+ * Formats a last-seen epoch-millis string into a human-readable relative label.
+ * - < 30 s   → "just now"
+ * - < 60 s   → "Xs ago"
+ * - < 60 min → "Xm ago"
+ * - < 24 h   → "Xh ago"
+ * - < 30 d   → "Xd ago"
+ * - ≥ 30 d   → "" (empty — don't show)
+ */
+private fun formatLastSeen(lastSeen: String): String {
+    val epochMs = lastSeen.toLongOrNull() ?: return ""
+    val diff    = System.currentTimeMillis() - epochMs
+    return when {
+        diff <  0L                    -> "just now"
+        diff <  30_000L               -> "just now"
+        diff <  60_000L               -> "${diff / 1_000}s ago"
+        diff <  3_600_000L            -> "${diff / 60_000}m ago"
+        diff <  86_400_000L           -> "${diff / 3_600_000}h ago"
+        diff <  30L * 86_400_000L     -> "${diff / 86_400_000}d ago"
+        else                          -> ""
+    }
+}
+
 private fun List<Message>.groupByDate(): Map<String, List<Message>> {
     val today     = Calendar.getInstance()
     val yesterday = Calendar.getInstance().also { it.add(Calendar.DAY_OF_YEAR, -1) }
@@ -956,9 +993,6 @@ private fun List<Message>.groupByDate(): Map<String, List<Message>> {
 private fun Calendar.isSameDay(other: Calendar): Boolean =
     get(Calendar.YEAR) == other.get(Calendar.YEAR) &&
             get(Calendar.DAY_OF_YEAR) == other.get(Calendar.DAY_OF_YEAR)
-
-// ─── Private emoji helpers (mirror of EmojiData.kt — kept here to guarantee
-//     resolution regardless of Kapt / KSP incremental compilation order) ──────
 
 private fun String.isOnlyEmoji(): Boolean {
     if (isBlank()) return false
