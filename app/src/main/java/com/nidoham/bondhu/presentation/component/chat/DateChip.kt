@@ -17,32 +17,44 @@ import androidx.compose.ui.unit.sp
 import com.nidoham.bondhu.ui.theme.CustomTypography
 
 /**
- * A centred, pill-shaped chip that displays a date-group label (e.g. "TODAY",
+ * A centered, pill-shaped chip that displays a date-group label (e.g., "TODAY",
  * "YESTERDAY", "JAN 5") between message runs in the conversation list.
  *
  * The chip uses a semi-transparent black scrim so it remains legible over any
- * wallpaper colour or image, without requiring knowledge of the background.
+ * wallpaper color or image, without requiring knowledge of the background.
  *
- * @param label The date string to display. Callers should pass an uppercased
- *              value; no transformation is applied here.
+ * @param dateLabel The date string to display. Callers should pass an uppercased
+ *                  value; no transformation is applied here.
  */
 @Composable
-internal fun DateChip(label: String) {
+internal fun DateChip(
+    dateLabel: String
+) {
+    // Styling configuration
+    val chipShape = RoundedCornerShape(12.dp)
+    val chipBackgroundColor = Color.Black.copy(alpha = 0.30f)
+    val contentPaddingHorizontal = 10.dp
+    val contentPaddingVertical = 4.dp
+    val containerVerticalPadding = 8.dp
+
     Box(
-        modifier         = Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = containerVerticalPadding),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text     = label,
+            text = dateLabel,
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black.copy(alpha = 0.30f))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .clip(chipShape)
+                .background(chipBackgroundColor)
+                .padding(
+                    horizontal = contentPaddingHorizontal,
+                    vertical = contentPaddingVertical
+                ),
             style = CustomTypography.overline.copy(
-                color      = Color.White,
-                fontSize   = 11.sp,
+                color = Color.White,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )
         )

@@ -61,48 +61,53 @@ import androidx.compose.ui.unit.sp
  * prompting the user to retry.
  *
  * All dimensions (input height, FAB size, horizontal padding) respond to
- * [windowClass] so the bar feels appropriately proportioned on phones,
+ * [windowSizeClass] so the bar feels appropriately proportioned on phones,
  * large-screen phones, and tablets.
  *
- * @param text          The current draft text value.
- * @param onTextChange  Invoked with the updated text on every keystroke.
- * @param onSend        Triggers message delivery; only called when [text] is non-blank.
- * @param isSendError   When `true`, displays a retry banner above the input row.
- * @param windowClass   Controls adaptive sizing and horizontal padding.
- * @param onEmojiClick  Invoked when the emoji icon button is tapped.
+ * @param messageText       The current draft text value.
+ * @param onMessageTextChange Invoked with the updated text on every keystroke.
+ * @param onSend            Triggers message delivery; only called when [messageText] is non-blank.
+ * @param isSendError       When `true`, displays a retry banner above the input row.
+ * @param windowSizeClass   Controls adaptive sizing and horizontal padding.
+ * @param onEmojiClick      Invoked when the emoji icon button is tapped.
  */
 @Composable
 fun ChatInputBar(
-    text: String,
-    onTextChange: (String) -> Unit,
+    messageText: String,
+    onMessageTextChange: (String) -> Unit,
     onSend: () -> Unit,
     isSendError: Boolean = false,
-    windowClass: WindowWidthClass,
+    windowSizeClass: WindowWidthClass,
     onEmojiClick: () -> Unit
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
-    val isTyping           = text.isNotBlank()
+    val hasText = messageText.isNotBlank()
 
-    val inputHeight = if (windowClass == WindowWidthClass.Compact) 44.dp else 48.dp
-    val fabSize     = if (windowClass == WindowWidthClass.Compact) 48.dp else 52.dp
-    val buttonSize  = if (windowClass == WindowWidthClass.Compact) 36.dp else 40.dp
-    val iconSize    = if (windowClass == WindowWidthClass.Compact) 22.dp else 24.dp
-    val horizontalPadding = when (windowClass) {
-        WindowWidthClass.Compact  -> 6.dp
-        WindowWidthClass.Medium   -> 16.dp
+    // Adaptive dimensions based on window size class
+    val inputFieldMinHeight = if (windowSizeClass == WindowWidthClass.Compact) 44.dp else 48.dp
+    val actionFabSize = if (windowSizeClass == WindowWidthClass.Compact) 48.dp else 52.dp
+    val iconButtonSize = if (windowSizeClass == WindowWidthClass.Compact) 36.dp else 40.dp
+    val vectorIconSize = if (windowSizeClass == WindowWidthClass.Compact) 22.dp else 24.dp
+
+    val contentPaddingHorizontal = when (windowSizeClass) {
+        WindowWidthClass.Compact -> 6.dp
+        WindowWidthClass.Medium -> 16.dp
         WindowWidthClass.Expanded -> 80.dp
     }
+
+    // Design constants
+    val sendButtonBackgroundColor = Color(0xFF25D366)
 
     Surface(
         shadowElevation = 0.dp,
         color = if (isSendError) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
-        else             Color.Transparent
+        else Color.Transparent
     ) {
         Column {
-            // Error retry banner — animates in/out with the default AnimatedVisibility fade.
+            // Error retry banner
             AnimatedVisibility(visible = isSendError) {
                 Text(
-                    text     = "⚠ Failed to send — tap send to retry",
+                    text = "⚠ Failed to send — tap send to retry",
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.errorContainer)
@@ -114,42 +119,42 @@ fun ChatInputBar(
             }
 
             Row(
-                modifier              = Modifier
+                modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = horizontalPadding, vertical = 6.dp),
-                verticalAlignment     = Alignment.CenterVertically,
+                    .padding(horizontal = contentPaddingHorizontal, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // ── Input pill ────────────────────────────────────────────────
+                // ── Input Pill ────────────────────────────────────────────────
                 Surface(
-                    modifier        = Modifier.weight(1f),
-                    shape           = RoundedCornerShape(24.dp),
-                    color           = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 3.dp
                 ) {
                     Row(
-                        modifier          = Modifier.padding(horizontal = 2.dp),
+                        modifier = Modifier.padding(horizontal = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
-                            onClick  = onEmojiClick,
-                            modifier = Modifier.size(buttonSize)
+                            onClick = onEmojiClick,
+                            modifier = Modifier.size(iconButtonSize)
                         ) {
                             Icon(
-                                imageVector        = Icons.Default.EmojiEmotions,
+                                imageVector = Icons.Default.EmojiEmotions,
                                 contentDescription = "Open emoji picker",
-                                tint               = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier           = Modifier.size(iconSize)
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(vectorIconSize)
                             )
                         }
 
                         TextField(
-                            value         = text,
-                            onValueChange = onTextChange,
-                            modifier      = Modifier
+                            value = messageText,
+                            onValueChange = onMessageTextChange,
+                            modifier = Modifier
                                 .weight(1f)
-                                .defaultMinSize(minHeight = inputHeight),
+                                .defaultMinSize(minHeight = inputFieldMinHeight),
                             placeholder = {
                                 Text(
                                     "Message",
@@ -158,18 +163,18 @@ fun ChatInputBar(
                                 )
                             },
                             colors = TextFieldDefaults.colors(
-                                focusedContainerColor   = Color.Transparent,
+                                focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent,
-                                focusedIndicatorColor   = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
-                                cursorColor             = MaterialTheme.colorScheme.primary,
-                                focusedTextColor        = MaterialTheme.colorScheme.onSurface,
-                                unfocusedTextColor      = MaterialTheme.colorScheme.onSurface
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            textStyle       = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
                             keyboardOptions = KeyboardOptions(
                                 capitalization = KeyboardCapitalization.Sentences,
-                                imeAction      = ImeAction.Send
+                                imeAction = ImeAction.Send
                             ),
                             keyboardActions = KeyboardActions(onSend = {
                                 onSend()
@@ -179,31 +184,31 @@ fun ChatInputBar(
                         )
 
                         // Attach and Camera buttons slide out when the user starts typing.
-                        AnimatedVisibility(visible = !isTyping) {
+                        AnimatedVisibility(visible = !hasText) {
                             IconButton(
-                                onClick  = { /* TODO: attachment picker */ },
-                                modifier = Modifier.size(buttonSize)
+                                onClick = { /* TODO: attachment picker */ },
+                                modifier = Modifier.size(iconButtonSize)
                             ) {
                                 Icon(
-                                    imageVector        = Icons.Default.AttachFile,
+                                    imageVector = Icons.Default.AttachFile,
                                     contentDescription = "Attach file",
-                                    tint               = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier           = Modifier
-                                        .size(iconSize)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .size(vectorIconSize)
                                         .graphicsLayer { rotationZ = -45f }
                                 )
                             }
                         }
-                        AnimatedVisibility(visible = !isTyping) {
+                        AnimatedVisibility(visible = !hasText) {
                             IconButton(
-                                onClick  = { /* TODO: camera capture */ },
-                                modifier = Modifier.size(buttonSize)
+                                onClick = { /* TODO: camera capture */ },
+                                modifier = Modifier.size(iconButtonSize)
                             ) {
                                 Icon(
-                                    imageVector        = Icons.Default.CameraAlt,
+                                    imageVector = Icons.Default.CameraAlt,
                                     contentDescription = "Open camera",
-                                    tint               = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier           = Modifier.size(iconSize)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(vectorIconSize)
                                 )
                             }
                         }
@@ -212,32 +217,37 @@ fun ChatInputBar(
 
                 // ── Send / Mic FAB ────────────────────────────────────────────
                 FloatingActionButton(
-                    onClick        = { if (isTyping) { onSend(); keyboardController?.hide() } },
-                    modifier       = Modifier.size(fabSize),
-                    shape          = CircleShape,
-                    containerColor = Color(0xFF25D366),
-                    contentColor   = Color.White,
-                    elevation      = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+                    onClick = {
+                        if (hasText) {
+                            onSend()
+                            keyboardController?.hide()
+                        }
+                    },
+                    modifier = Modifier.size(actionFabSize),
+                    shape = CircleShape,
+                    containerColor = sendButtonBackgroundColor,
+                    contentColor = Color.White,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
                 ) {
                     AnimatedContent(
-                        targetState  = isTyping,
+                        targetState = hasText,
                         transitionSpec = {
                             (scaleIn(initialScale = 0.72f) + fadeIn()) togetherWith
                                     (scaleOut(targetScale = 0.72f) + fadeOut())
                         },
-                        label = "send_mic_toggle"
-                    ) { typing ->
-                        if (typing) {
+                        label = "SendMicIconToggle"
+                    ) { showSendIcon ->
+                        if (showSendIcon) {
                             Icon(
-                                imageVector        = Icons.AutoMirrored.Filled.Send,
+                                imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Send message",
-                                modifier           = Modifier.size(iconSize)
+                                modifier = Modifier.size(vectorIconSize)
                             )
                         } else {
                             Icon(
-                                imageVector        = Icons.Default.Mic,
+                                imageVector = Icons.Default.Mic,
                                 contentDescription = "Record voice message",
-                                modifier           = Modifier.size(iconSize + 2.dp)
+                                modifier = Modifier.size(vectorIconSize + 2.dp)
                             )
                         }
                     }

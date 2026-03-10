@@ -4,17 +4,14 @@ import com.google.firebase.Timestamp
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 // ─── FormatHelper ────────────────────────────────────────────────────────────
 //
 // A collection of pure, stateless extension functions for formatting raw data
-// values into human-readable strings across the presentation layer.
-//
-// All formatters are locale-aware where the output is user-visible (date labels,
-// relative time strings), and use Locale.US for numeric formatting to ensure
-// decimal separators are consistent regardless of device language.
+// values into human-readable strings.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -29,111 +26,152 @@ fun Timestamp?.toMillis(defaultValue: Long = 0L): Long =
 // ─── Count Formatting ─────────────────────────────────────────────────────────
 
 /**
- * Formats a raw count into a compact social-media string, using K / M / B
- * suffixes for large values.
- *
- * Decimal places are included only when significant (i.e. 1 500 → "1.5K",
- * but 2 000 → "2K"). Numeric output always uses `Locale.US` so the decimal
- * separator is always `.`, regardless of the device locale.
- *
- * Examples:
- * | Input        | Output  |
- * |-------------|---------|
- * | 500         | "500"   |
- * | 1 500       | "1.5K"  |
- * | 2 000 000   | "2M"    |
- * | 1 200 000 000 | "1.2B"|
+ * Formats a raw count into a compact social-media string (e.g., 1.5K, 2M).
+ * Uses [Locale.US] to ensure consistent decimal separators.
  */
 @Suppress("unused")
 fun Long.toFormattedCount(): String {
     if (this < 1_000) return this.toString()
 
-    val symbols   = DecimalFormatSymbols.getInstance(Locale.US)
+    val symbols = DecimalFormatSymbols.getInstance(Locale.US)
     val formatter = DecimalFormat("#.#", symbols)
-    val value     = this.toDouble()
 
     return when {
-        this < 1_000_000 -> {
-            val thousands = value / 1_000
-            if (thousands == thousands.toLong().toDouble()) "${thousands.toLong()}K"
-            else "${formatter.format(thousands)}K"
-        }
-        this < 1_000_000_000 -> {
-            val millions = value / 1_000_000
-            if (millions == millions.toLong().toDouble()) "${millions.toLong()}M"
-            else "${formatter.format(millions)}M"
-        }
-        else -> {
-            val billions = value / 1_000_000_000
-            if (billions == billions.toLong().toDouble()) "${billions.toLong()}B"
-            else "${formatter.format(billions)}B"
-        }
+        this < 1_000_000 -> "${formatter.format(this / 1_000.0)}K"
+        this < 1_000_000_000 -> "${formatter.format(this / 1_000_000.0)}M"
+        else -> "${formatter.format(this / 1_000_000_000.0)}B"
     }
 }
 
-/**
- * Convenience overload of [Long.toFormattedCount] for [Int] values.
- */
 @Suppress("unused")
 fun Int.toFormattedCount(): String = this.toLong().toFormattedCount()
+
+/**
+ * Formats a number with grouping separators (e.g., 1,500,000).
+ */
+@Suppress("unused")
+fun Long.toFormattedNumber(): String {
+    return DecimalFormat("#,##,###", DecimalFormatSymbols.getInstance(Locale.US)).format(this)
+}
+
+@Suppress("unused")
+fun Int.toFormattedNumber(): String = this.toLong().toFormattedNumber()
+
+// ─── File Size Formatting ─────────────────────────────────────────────────────
+
+/**
+ * Formats a size in bytes into a human-readable string (e.g., 12.5 MB).
+ */
+@Suppress("unused")
+fun Long.toFormattedFileSize(): String {
+    if (this < 1024) return "$this B"
+
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val value = this.toDouble()
+    val exp = (Math.log(value) / Math.log(1024.0)).toInt()
+    val index = exp.coerceIn(0, units.size - 1)
+
+    val symbols = DecimalFormatSymbols.getInstance(Locale.US)
+    val formatter = DecimalFormat("#.##", symbols)
+
+    return "${formatter.format(value / Math.pow(1024.0, index.toDouble()))} ${units[index]}"
+}
+
+@Suppress("unused")
+fun Int.toFormattedFileSize(): String = this.toLong().toFormattedFileSize()
 
 // ─── Relative Time (Time Ago) ─────────────────────────────────────────────────
 
 /**
- * Converts a Firebase [Timestamp] into a concise relative-time string using
- * the device locale for date formatting.
- *
- * The output progresses through increasing granularity as elapsed time grows:
- *
- * | Elapsed time   | Example output      |
- * |----------------|---------------------|
- * | < 60 seconds   | "Just now"          |
- * | < 60 minutes   | "5m ago"            |
- * | < 24 hours     | "2h ago"            |
- * | < 7 days       | "3d ago"            |
- * | < 30 days      | "2w ago"            |
- * | ≥ 30 days      | "Jan 5, 2024"       |
+ * Converts a Firebase [Timestamp] into a concise relative-time string.
+ * Handles past ("5m ago") and future timestamps (clock skew).
  */
 @Suppress("unused")
 fun Timestamp.toTimeAgo(): String {
-    val now     = System.currentTimeMillis()
-    val elapsed = now - toMillis()
+    return this.toMillis().toTimeAgo()
+}
+
+/**
+ * Converts epoch milliseconds into a concise relative-time string.
+ */
+@Suppress("unused")
+fun Long.toTimeAgo(): String {
+    val now = System.currentTimeMillis()
+    val elapsed = now - this
+
+    // Handle future dates (e.g., clock skew) by clamping to "Just now"
+    if (elapsed < 0) return "Just now"
 
     val seconds = TimeUnit.MILLISECONDS.toSeconds(elapsed)
     val minutes = TimeUnit.MILLISECONDS.toMinutes(elapsed)
-    val hours   = TimeUnit.MILLISECONDS.toHours(elapsed)
-    val days    = TimeUnit.MILLISECONDS.toDays(elapsed)
+    val hours = TimeUnit.MILLISECONDS.toHours(elapsed)
+    val days = TimeUnit.MILLISECONDS.toDays(elapsed)
 
     return when {
         seconds < 60 -> "Just now"
-        minutes < 60 -> "${minutes}m ago"
-        hours   < 24 -> "${hours}h ago"
-        days    <  7 -> "${days}d ago"
-        days    < 30 -> "${days / 7}w ago"
-        else -> SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(toDate())
+        minutes < 60 -> "Active $minutes minutes ago"
+        hours < 24 -> "Active $hours hours ago"
+        days < 7 -> "Active $days days ago"
+        else -> ""
     }
 }
 
-// ─── Media Duration ───────────────────────────────────────────────────────────
+// ─── Date & Duration Formatting ───────────────────────────────────────────────
 
 /**
- * Formats a duration in milliseconds into a standard playback time string.
- *
- * Uses `%02d` zero-padding and `Locale.US` to guarantee consistent output
- * regardless of the device locale.
- *
- * | Input ms    | Output    |
- * |-------------|-----------|
- * | 5 000       | "00:05"   |
- * | 65 000      | "01:05"   |
- * | 3 600 000   | "1:00:00" |
+ * Formats a duration in milliseconds into a playback time string (MM:SS or H:MM:SS).
  */
 @Suppress("unused")
 fun Long.toFormattedDuration(): String {
-    val hours   = TimeUnit.MILLISECONDS.toHours(this)
+    val hours = TimeUnit.MILLISECONDS.toHours(this)
     val minutes = TimeUnit.MILLISECONDS.toMinutes(this) % 60
     val seconds = TimeUnit.MILLISECONDS.toSeconds(this) % 60
 
-    return if (hours > 0) String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-    else           String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    return if (hours > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    }
+}
+
+/**
+ * Formats a Firebase [Timestamp] into a date string using the provided pattern.
+ *
+ * @param pattern The date format pattern (e.g., "yyyy-MM-dd").
+ * @param locale  The locale to use for formatting. Defaults to device locale.
+ */
+@Suppress("unused")
+fun Timestamp.toFormattedDate(pattern: String, locale: Locale = Locale.getDefault()): String {
+    return this.toMillis().toFormattedDate(pattern, locale)
+}
+
+/**
+ * Formats epoch milliseconds into a date string using the provided pattern.
+ */
+@Suppress("unused")
+fun Long.toFormattedDate(pattern: String, locale: Locale = Locale.getDefault()): String {
+    return try {
+        val sdf = SimpleDateFormat(pattern, locale)
+        sdf.format(Date(this))
+    } catch (e: Exception) {
+        "Invalid Date"
+    }
+}
+
+/**
+ * Formats a [Timestamp] or [Long] into an ISO 8601 standard string (UTC).
+ * Useful for server-side sorting or API responses.
+ */
+@Suppress("unused")
+fun Timestamp.toISODateString(): String {
+    val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+    return sdf.format(this.toDate())
+}
+
+@Suppress("unused")
+fun Long.toISODateString(): String {
+    val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+    return sdf.format(Date(this))
 }

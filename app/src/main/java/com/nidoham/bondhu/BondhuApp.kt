@@ -1,6 +1,7 @@
 package com.nidoham.bondhu
 
 import android.app.Application
+import android.content.Context
 import com.google.firebase.database.FirebaseDatabase
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,11 @@ class BondhuApp : Application() {
     // Application-wide scope using SupervisorJob so one failure doesn't cancel others.
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    lateinit var app: Application
+
+    val context: Context
+        get() = app.applicationContext
+
     override fun onCreate() {
         super.onCreate()
 
@@ -48,5 +54,8 @@ class BondhuApp : Application() {
         appScope.launch {
             runCatching { ImgBBStorage.apiKey() }
         }
+    }
+
+    companion object{
     }
 }

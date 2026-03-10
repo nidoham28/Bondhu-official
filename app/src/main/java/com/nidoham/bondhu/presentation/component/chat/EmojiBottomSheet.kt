@@ -256,8 +256,6 @@ fun EmojiBottomSheet(
                     verticalArrangement   = Arrangement.spacedBy(2.dp),
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    // Fixed: was incorrectly calling non-existent `gridItems`;
-                    // the correct LazyVerticalGrid API is `items`.
                     items(displayedEmojis) { emoji ->
                         Box(
                             contentAlignment = Alignment.Center,

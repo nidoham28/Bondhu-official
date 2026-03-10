@@ -95,12 +95,12 @@ fun ChatScreen(
             containerColor = Color.Transparent,
             topBar = {
                 ChatTopBar(
-                    name        = uiState.peerName,
-                    avatarUrl   = uiState.peerAvatarUrl,
+                    peerName        = uiState.peerName,
+                    peerAvatarUrl   = uiState.peerAvatarUrl,
                     isOnline    = uiState.isPeerOnline,
-                    lastSeen    = uiState.lastSeen,
-                    onBack      = onBack,
-                    windowClass = windowClass,
+                    lastSeenTimestamp    = uiState.lastSeen,
+                    onNavigateBack      = onBack,
+                    windowSizeClass = windowClass,
                 )
             },
         ) { innerPadding ->
@@ -136,11 +136,11 @@ fun ChatScreen(
                     }
 
                     ChatInputBar(
-                        text         = uiState.inputText,
-                        onTextChange = onInputChanged,
+                        messageText         = uiState.inputText,
+                        onMessageTextChange = onInputChanged,
                         onSend       = onSend,
                         isSendError  = uiState.isSendError,
-                        windowClass  = windowClass,
+                        windowSizeClass  = windowClass,
                         onEmojiClick = {
                             // State write happens on the main thread so the value
                             // is immediately visible to the if-block below.

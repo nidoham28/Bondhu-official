@@ -34,52 +34,52 @@ import androidx.compose.ui.unit.dp
  *   ("active" when online, or a human-readable last-seen string otherwise).
  * - **Call** and **More** action icons.
  *
- * The avatar size scales with [windowClass] (40 dp on compact, 48 dp on larger
+ * The avatar size scales with [windowSizeClass] (40 dp on compact, 48 dp on larger
  * screens). The bar background uses `MaterialTheme.colorScheme.background` rather
  * than a surface-level colour so it blends with the wallpaper on transparent
  * Scaffold configurations.
  *
- * @param name        Peer display name shown as the title.
- * @param avatarUrl   Remote URL for the peer's profile photo.
- * @param isOnline    When `true`, the sub-label shows "active"; otherwise
- *                    [formatLastSeen] is used to derive a human-readable label.
- * @param lastSeen    Epoch-millisecond string from the remote user document;
- *                    passed directly to [formatLastSeen].
- * @param onBack      Navigates back to the conversation list.
- * @param windowClass Controls the avatar size dimension.
+ * @param peerName Peer display name shown as the title.
+ * @param peerAvatarUrl Remote URL for the peer's profile photo.
+ * @param isOnline When `true`, the sub-label shows "active"; otherwise
+ *                 [formatLastSeen] is used to derive a human-readable label.
+ * @param lastSeenTimestamp Epoch-millisecond string from the remote user document;
+ *                          passed directly to [formatLastSeen].
+ * @param onNavigateBack Navigates back to the conversation list.
+ * @param windowSizeClass Controls the avatar size dimension.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatTopBar(
-    name: String,
-    avatarUrl: String,
+    peerName: String,
+    peerAvatarUrl: String,
     isOnline: Boolean,
-    lastSeen: String,
-    onBack: () -> Unit,
-    windowClass: WindowWidthClass
+    lastSeenTimestamp: String,
+    onNavigateBack: () -> Unit,
+    windowSizeClass: WindowWidthClass
 ) {
-    val avatarSize = if (windowClass == WindowWidthClass.Compact) 40.dp else 48.dp
+    val avatarSize = if (windowSizeClass == WindowWidthClass.Compact) 40.dp else 48.dp
 
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor             = MaterialTheme.colorScheme.background,
-            titleContentColor          = MaterialTheme.colorScheme.onBackground,
+            containerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
             navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
-            actionIconContentColor     = MaterialTheme.colorScheme.onBackground
+            actionIconContentColor = MaterialTheme.colorScheme.onBackground
         ),
         navigationIcon = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = onNavigateBack) {
                     Icon(
-                        imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Navigate back"
                     )
                 }
                 PeerAvatar(
-                    avatarUrl = avatarUrl,
-                    name      = name,
-                    size      = avatarSize,
-                    isOnline  = isOnline
+                    avatarUrl = peerAvatarUrl,
+                    name = peerName,
+                    size = avatarSize,
+                    isOnline = isOnline
                 )
                 Spacer(Modifier.width(8.dp))
             }
@@ -87,18 +87,20 @@ fun ChatTopBar(
         title = {
             Column {
                 Text(
-                    text     = name.ifBlank { "Loading…" },
-                    style    = MaterialTheme.typography.titleMedium.copy(
+                    text = peerName.ifBlank { "Loading…" },
+                    style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold,
-                        color      = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val presenceLabel = if (isOnline) "active" else formatLastSeen(lastSeen)
-                if (presenceLabel.isNotEmpty()) {
+
+                val statusText = if (isOnline) "" else lastSeenTimestamp
+
+                if (statusText.isNotEmpty()) {
                     Text(
-                        text  = presenceLabel,
+                        text = statusText,
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
                         )
@@ -107,10 +109,10 @@ fun ChatTopBar(
             }
         },
         actions = {
-            IconButton(onClick = { /* TODO: voice call */ }) {
+            IconButton(onClick = { /* TODO: Initiate voice call */ }) {
                 Icon(Icons.Default.Call, contentDescription = "Voice call")
             }
-            IconButton(onClick = { /* TODO: overflow menu */ }) {
+            IconButton(onClick = { /* TODO: Show overflow menu */ }) {
                 Icon(Icons.Default.MoreVert, contentDescription = "More options")
             }
         }

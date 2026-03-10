@@ -1,5 +1,6 @@
 package com.nidoham.bondhu.presentation.viewmodel
 
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.database.DataSnapshot
@@ -7,8 +8,10 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.nidoham.bondhu.BondhuApp
 import com.nidoham.bondhu.data.repository.message.MessageRepository
 import com.nidoham.bondhu.data.repository.user.UserRepository
+import dagger.hilt.android.internal.Contexts.getApplication
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
@@ -24,6 +27,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.nidoham.server.domain.model.Message
 import org.nidoham.server.domain.model.MessageType
+import org.nidoham.server.util.toTimeAgo
+import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -220,7 +225,7 @@ class ChatViewModel @Inject constructor(
             _uiState.update { state ->
                 state.copy(
                     isPeerOnline = effectivelyOnline,
-                    lastSeen     = if (effectivelyOnline) "online" else formatLastSeen(lastSeenMs, now)
+                    lastSeen     = if (effectivelyOnline) "online" else formatLastSeen(lastSeenMs)
                 )
             }
         }
@@ -418,28 +423,11 @@ class ChatViewModel @Inject constructor(
      *   < 61 days    → "last seen 1 month ago"
      *   ≥ 61 days    → ""  (too old — omit entirely)
      */
-    private fun formatLastSeen(lastSeenMs: Long, nowMs: Long): String {
+    private fun formatLastSeen(lastSeenMs: Long): String {
         if (lastSeenMs == 0L) return ""
 
-        val diffMs      = nowMs - lastSeenMs
-        val diffSeconds = TimeUnit.MILLISECONDS.toSeconds(diffMs)
-        val diffMinutes = TimeUnit.MILLISECONDS.toMinutes(diffMs)
-        val diffHours   = TimeUnit.MILLISECONDS.toHours(diffMs)
-        val diffDays    = TimeUnit.MILLISECONDS.toDays(diffMs)
-
-        return when {
-            diffSeconds < 60 -> "last seen just a few moments ago"
-            diffMinutes < 60 -> "last seen ${diffSeconds}s ago"
-            diffHours   < 24 -> {
-                val mins = diffMinutes % 60
-                if (mins == 0L) "last seen ${diffHours}h ago"
-                else            "last seen ${diffHours}h ${mins}m ago"
-            }
-            diffDays    < 2  -> "last seen 1 day ago"
-            diffDays    < 60 -> "last seen $diffDays days ago"
-            diffDays    < 61 -> "last seen 1 month ago"
-            else             -> ""
-        }
+        val relative = lastSeenMs.toTimeAgo()
+        return relative
     }
 
     // ─────────────────────────────────────────────────────────────────────────

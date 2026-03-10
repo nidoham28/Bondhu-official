@@ -21,50 +21,45 @@ import com.nidoham.bondhu.R
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-private const val LIGHT_BACKGROUND_URL = "file:///android_asset/light_background.jpg"
-private const val DARK_BACKGROUND_URL  = "file:///android_asset/dark_background.jpg"
+private const val DEFAULT_LIGHT_BACKGROUND_URL = "file:///android_asset/light_background.jpg"
+private const val DEFAULT_DARK_BACKGROUND_URL = "file:///android_asset/dark_background.jpg"
 
 /**
- * Full-screen chat wallpaper that switches between [lightUrl] and [darkUrl]
- * according to the current system theme.
+ * A full-screen composable that renders a chat wallpaper.
+ *
+ * It automatically switches between light and dark variants based on the system theme.
+ * It supports loading images either from remote URLs/Assets or local Drawable resources.
  *
  * This composable must be placed *below* the [androidx.compose.material3.Scaffold]
- * in the z-order (i.e. composed before it inside a
- * [androidx.compose.foundation.layout.Box] or
- * [androidx.compose.foundation.layout.BoxWithConstraints]), and the Scaffold's
+ * in the z-order (i.e., composed before it inside a Box). The Scaffold's
  * `containerColor` must be set to [androidx.compose.ui.graphics.Color.Transparent]
- * so the wallpaper shows through.
+ * for the wallpaper to be visible.
  *
- * Both URL parameters accept any scheme recognised by [Coil](https://coil-kt.github.io/coil/):
- * `https://`, `file://`, `content://`, etc.
- *
- * @param lightUrl URL of the wallpaper to display in light mode.
- *                 Defaults to the bundled `light_background.jpg` asset.
- * @param darkUrl  URL of the wallpaper to display in dark mode.
- *                 Defaults to the bundled `dark_background.jpg` asset.
+ * @param useRemoteSource If true, loads the image from the provided [lightModeUrl] or [darkModeUrl].
+ *                         If false (default), loads from local drawable resources.
+ * @param lightModeUrl The URL or asset path for the wallpaper in light mode.
+ * @param darkModeUrl The URL or asset path for the wallpaper in dark mode.
  */
 @Composable
 fun ChatBackground(
-    url: Boolean = false,
-    lightUrl: String = LIGHT_BACKGROUND_URL,
-    darkUrl:  String = DARK_BACKGROUND_URL,
+    useRemoteSource: Boolean = false,
+    lightModeUrl: String = DEFAULT_LIGHT_BACKGROUND_URL,
+    darkModeUrl: String = DEFAULT_DARK_BACKGROUND_URL,
 ) {
-    val imageUrl = if (isSystemInDarkTheme()) darkUrl else lightUrl
-    val image = if (isSystemInDarkTheme()) R.drawable.dark_background else R.drawable.light_background
+    val isDarkTheme = isSystemInDarkTheme()
 
-    if (url){
-        AsyncImage(
-            model              = imageUrl,
-            contentDescription = null,
-            contentScale       = ContentScale.Crop,
-            modifier           = Modifier.fillMaxSize(),
-        )
+    // Determine the appropriate image source based on theme and source type.
+    // Coil's 'model' accepts Any (both Int and String), allowing us to unify the logic.
+    val imageModel: Any = if (useRemoteSource) {
+        if (isDarkTheme) darkModeUrl else lightModeUrl
     } else {
-        AsyncImage(
-            model              = image,
-            contentDescription = null,
-            contentScale       = ContentScale.Crop,
-            modifier           = Modifier.fillMaxSize(),
-        )
+        if (isDarkTheme) R.drawable.dark_background else R.drawable.light_background
     }
+
+    AsyncImage(
+        model = imageModel,
+        contentDescription = null, // Decorative background element
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxSize()
+    )
 }
