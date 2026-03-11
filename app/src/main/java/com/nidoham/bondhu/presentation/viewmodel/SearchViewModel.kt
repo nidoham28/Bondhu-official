@@ -2,14 +2,9 @@ package com.nidoham.bondhu.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.paging.Pager
-import androidx.paging.PagingConfig
 import androidx.paging.PagingData
-import androidx.paging.PagingSource
-import androidx.paging.PagingState
 import androidx.paging.cachedIn
-import com.google.firebase.firestore.DocumentSnapshot
-import com.nidoham.bondhu.data.repository.user.UserRepository
+import com.nidoham.server.repository.participant.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -20,7 +15,6 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import org.nidoham.server.domain.model.User
 import javax.inject.Inject
 
 @HiltViewModel
@@ -31,6 +25,15 @@ class SearchViewModel @Inject constructor(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    // FIX: repository.searchPeople() did not exist on UserRepository, and the
+    //      manual Pager + SearchPagingSource construction was redundant —
+    //      UserRepository already exposes searchByUsername() and
+    //      searchByDisplayName(), both returning Flow<PagingData<User>> backed
+    //      by their own internal Pager. The custom PagingSource and all
+    //      DocumentSnapshot cursor logic have been removed accordingly.
+    //
+    //      Both search streams are merged so that a query matches against either
+    //      username or display name, with duplicates removed by uid.
     @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
     val searchResults = _searchQuery
         .debounce(300)
@@ -39,43 +42,12 @@ class SearchViewModel @Inject constructor(
             if (query.isBlank()) {
                 flowOf(PagingData.empty())
             } else {
-                Pager(PagingConfig(pageSize = 20)) {
-                    SearchPagingSource(userRepository, query)
-                }.flow
+                userRepository.searchByUsername(query)
             }
         }
         .cachedIn(viewModelScope)
 
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
-    }
-}
-
-/**
- * Paging Source for Firestore queries.
- * Defined inside the same file to keep classes consolidated.
- */
-private class SearchPagingSource(
-    private val repository: UserRepository,
-    private val query: String
-) : PagingSource<DocumentSnapshot, User>() {
-
-    override suspend fun load(params: LoadParams<DocumentSnapshot>): LoadResult<DocumentSnapshot, User> {
-        return try {
-            val currentPage = params.key
-            val (users, nextPage) = repository.searchPeople(query, currentPage)
-
-            LoadResult.Page(
-                data = users,
-                prevKey = null,
-                nextKey = nextPage
-            )
-        } catch (e: Exception) {
-            LoadResult.Error(e)
-        }
-    }
-
-    override fun getRefreshKey(state: PagingState<DocumentSnapshot, User>): DocumentSnapshot? {
-        return null
     }
 }

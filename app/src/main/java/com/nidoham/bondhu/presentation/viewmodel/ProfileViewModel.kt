@@ -1,11 +1,13 @@
 package com.nidoham.bondhu.presentation.viewmodel
 
-import android.nidoham.server.domain.ParticipantType
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nidoham.bondhu.data.repository.message.MessageRepository
-import com.nidoham.bondhu.data.repository.user.UserRepository
+import com.google.firebase.auth.FirebaseAuth
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
+import com.nidoham.server.domain.message.Conversation
+import com.nidoham.server.repository.message.MessageRepository
+import com.nidoham.server.repository.participant.UserRepository
+import com.nidoham.server.util.ParticipantType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +20,10 @@ import javax.inject.Inject
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val userRepository: UserRepository,
-    private val messageRepository: MessageRepository
+    private val messageRepository: MessageRepository,
+    // FIX: getCurrentUserId() did not exist on UserRepository.
+    //      FirebaseAuth is the authoritative source for the current user's UID.
+    private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
     // ─────────────────────────────────────────────────────────────
@@ -47,21 +52,30 @@ class ProfileViewModel @Inject constructor(
     fun refreshProfile() = fetchProfile(currentProfileId)
 
     fun updateLastActive() {
+        // FIX: getCurrentUserId() did not exist on UserRepository.
+        //      FIX: updateProfile() requires (uid, fields) — the uid was missing.
+        val uid = firebaseAuth.currentUser?.uid ?: return
         viewModelScope.launch {
-            userRepository.updateProfile(mapOf("lastActiveAt" to System.currentTimeMillis()))
+            userRepository.updateProfile(uid, mapOf("lastActiveAt" to System.currentTimeMillis()))
         }
     }
 
     fun toggleFollow() {
         val targetId = _uiState.value.user?.uid ?: return
+        val currentId = firebaseAuth.currentUser?.uid ?: return
         if (_uiState.value.isFollowLoading) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(isFollowLoading = true) }
-            val result = if (_uiState.value.isFollowing) {
-                userRepository.unfollow(targetId)
-            } else {
-                userRepository.follow(targetId)
+
+            // FIX: followUser() and unfollowUser() both take (currentUid, targetUid)
+            //      and return Unit, not Result. Wrapped in runCatching accordingly.
+            val result = runCatching {
+                if (_uiState.value.isFollowing) {
+                    userRepository.unfollowUser(currentId, targetId)
+                } else {
+                    userRepository.followUser(currentId, targetId)
+                }
             }
 
             result.fold(
@@ -89,7 +103,7 @@ class ProfileViewModel @Inject constructor(
 
     /**
      * Finds or creates a private conversation between the signed-in user and
-     * [targetUserId], then delivers the conversationId via [onConversationReady].
+     * [targetUserId], then delivers the conversation ID via [onConversationReady].
      */
     fun startConversation(targetUserId: String, onConversationReady: (String) -> Unit) {
         if (_uiState.value.isMessageLoading) return
@@ -98,22 +112,29 @@ class ProfileViewModel @Inject constructor(
             _uiState.update { it.copy(isMessageLoading = true, error = null) }
 
             runCatching {
-                val currentUserId = userRepository.getCurrentUserId()
+                // FIX: getCurrentUserId() did not exist on UserRepository.
+                val currentUserId = firebaseAuth.currentUser?.uid
                     ?: throw IllegalStateException("Not signed in.")
 
-                val targetUser = userRepository.getUserProfile(targetUserId)
+                // FIX: getUserProfile() did not exist on UserRepository.
+                //      Replaced with fetchUserById(), which is the correct API.
+                val targetUser = userRepository.fetchUserById(targetUserId)
                 val title = targetUser?.displayName?.takeIf { it.isNotBlank() }
                     ?: targetUser?.username?.takeIf { it.isNotBlank() }
                     ?: "Chat"
 
-                val conversation = messageRepository.createConversation(
-                    creatorId             = currentUserId,
-                    title                 = title,
-                    type                  = ParticipantType.PERSONAL,
-                    initialParticipantIds = listOf(currentUserId, targetUserId)
+                // FIX: createConversation() accepts a Conversation object, not named
+                //      parameters. It returns Result<String> — the new conversation ID —
+                //      not a Conversation object, so .conversationId was also wrong.
+                val conversationId = messageRepository.createConversation(
+                    Conversation(
+                        creatorId = currentUserId,
+                        title     = title,
+                        type      = ParticipantType.PERSONAL.value
+                    )
                 ).getOrThrow()
 
-                onConversationReady(conversation.conversationId)
+                onConversationReady(conversationId)
             }.onSuccess {
                 _uiState.update { it.copy(isMessageLoading = false) }
             }.onFailure { error ->
@@ -138,17 +159,23 @@ class ProfileViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             runCatching {
-                val currentUid = userRepository.getCurrentUserId()
+                val currentUid = firebaseAuth.currentUser?.uid
                 val isOwner    = profileUserId == null || profileUserId == currentUid
 
-                val user = if (isOwner) {
-                    userRepository.getCurrentUserProfile()
-                } else {
-                    userRepository.getUserProfile(profileUserId)
-                } ?: throw NoSuchElementException("User not found.")
+                // FIX: the previous ?: throw was bound only to the `else null` branch,
+                //      not to the full if/else expression. The compiler saw `null ?: throw`
+                //      (useless elvis), inferred the result type as Nothing, and then
+                //      reported user.uid as an unresolved reference because Nothing has no
+                //      members. Wrapping the entire if/else/null in parentheses before
+                //      applying ?: gives user a non-null type of User.
+                val user = (if (isOwner && currentUid != null) {
+                    userRepository.fetchCurrentUser(currentUid)
+                } else if (profileUserId != null) {
+                    userRepository.fetchUserById(profileUserId)
+                } else null) ?: throw NoSuchElementException("User not found.")
 
                 val isFollowing = if (!isOwner && currentUid != null) {
-                    userRepository.isFollowing(user.uid)
+                    userRepository.isFollowing(currentUid, user.uid)
                 } else false
 
                 observeOnlineStatus(user.uid)
@@ -178,7 +205,9 @@ class ProfileViewModel @Inject constructor(
     private fun observeOnlineStatus(uid: String) {
         presenceJob?.cancel()
         presenceJob = viewModelScope.launch {
-            userRepository.observeUserPresence(uid).collect { status ->
+            // FIX: observeUserPresence() did not exist on UserRepository.
+            //      Replaced with observeUserStatus(), which is the correct API.
+            userRepository.observeUserStatus(uid).collect { status ->
                 _isTargetOnline.value = status.online
             }
         }

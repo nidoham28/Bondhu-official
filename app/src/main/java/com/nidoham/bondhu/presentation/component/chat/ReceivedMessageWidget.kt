@@ -24,8 +24,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.nidoham.server.domain.model.Message
-import org.nidoham.server.domain.model.MessageType
+import com.nidoham.server.domain.message.Message
+import com.nidoham.server.util.MessageType
 
 // ─── Instagram colour tokens ──────────────────────────────────────────────────
 
@@ -79,7 +79,7 @@ private val ReceivedBubbleShape = RoundedCornerShape(
  */
 @Composable
 fun ReceivedMessageWidget(
-    message:        Message,
+    message: Message,
     bubbleMaxWidth: Dp,
     onTap:          () -> Unit
 ) {
@@ -110,7 +110,9 @@ fun ReceivedMessageWidget(
 @Composable
 private fun ReceivedBubbleContent(message: Message, textColor: Color) {
     Column {
-        when (message.toType()) {
+        // FIX: toType() does not exist on Message. The type field is a String;
+        //      convert it to the MessageType enum via valueOf().
+        when (MessageType.valueOf(message.type.uppercase())) {
             MessageType.IMAGE -> Text(
                 text      = "📷 Photo",
                 style     = MaterialTheme.typography.bodyMedium.copy(
@@ -130,7 +132,9 @@ private fun ReceivedBubbleContent(message: Message, textColor: Color) {
                 )
             }
         }
-        if (message.isEdited) {
+        // FIX: isEdited does not exist on Message. The model exposes editedAt: Timestamp?,
+        //      where a non-null value is the authoritative indicator of an edit.
+        if (message.editedAt != null) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text  = "edited",

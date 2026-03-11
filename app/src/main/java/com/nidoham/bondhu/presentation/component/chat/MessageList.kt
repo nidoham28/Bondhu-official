@@ -20,7 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import org.nidoham.server.domain.model.Message
+import com.nidoham.server.domain.message.Message
 
 /**
  * Scrollable, animated list of conversation messages grouped by date.

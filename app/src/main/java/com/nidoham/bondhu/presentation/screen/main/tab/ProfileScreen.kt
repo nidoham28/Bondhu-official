@@ -46,7 +46,7 @@ import com.nidoham.bondhu.presentation.component.profile.PostItem
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.viewmodel.ProfileViewModel
-import org.nidoham.server.domain.model.User
+import com.nidoham.server.domain.participant.User
 
 // ─────────────────────────────────────────────────────────────
 // Root screen
@@ -413,7 +413,7 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Phone, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(user.phoneNumber, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(user.phoneNumber!!, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

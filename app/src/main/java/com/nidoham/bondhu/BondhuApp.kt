@@ -2,13 +2,12 @@ package com.nidoham.bondhu
 
 import android.app.Application
 import android.content.Context
-import com.google.firebase.database.FirebaseDatabase
+import com.nidoham.server.manager.PresenceManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import org.nidoham.server.data.repository.PresenceManager
 import org.nidoham.server.util.ImgBBStorage
 import timber.log.Timber
 import javax.inject.Inject
@@ -23,7 +22,8 @@ import javax.inject.Inject
  * - Provides an application-wide CoroutineScope for background tasks.
  */
 @HiltAndroidApp
-class BondhuApp : Application() {
+class
+BondhuApp : Application() {
 
     // Inject PresenceManager via Hilt instead of constructing it manually.
     // Hilt injects into @HiltAndroidApp Application classes automatically before onCreate().

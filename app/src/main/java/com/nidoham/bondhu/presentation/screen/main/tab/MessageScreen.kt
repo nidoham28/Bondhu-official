@@ -25,25 +25,21 @@ import androidx.paging.compose.itemKey
 import coil.compose.AsyncImage
 import com.nidoham.bondhu.R
 import com.nidoham.bondhu.presentation.component.common.TopBar
-// Renamed from ChatsScreen → MessageScreen
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.viewmodel.ConversationWithUser
 import com.nidoham.bondhu.presentation.viewmodel.MessageViewModel
+import com.nidoham.server.util.ParticipantType
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Composable
 fun MessageScreen(
     viewModel: MessageViewModel = hiltViewModel()
-    // FIX: removed onNavigateToChat callback — navigation is handled internally
-    //      via LocalContext so the caller (MainScreen) doesn't need a no-op lambda
 ) {
     val conversations: LazyPagingItems<ConversationWithUser> =
         viewModel.conversations.collectAsLazyPagingItems()
 
     val currentUserId = viewModel.currentUserId
-
-    // FIX: grab context here so ConversationItem can call NavigationHelper
     val context = LocalContext.current
 
     Column(
@@ -97,15 +93,15 @@ fun MessageScreen(
                 ) {
                     items(
                         count = conversations.itemCount,
-                        key   = conversations.itemKey { it.conversation.conversationId }
+                        // FIX: Conversation.conversationId does not exist.
+                        //      The document ID field is Conversation.id.
+                        key   = conversations.itemKey { it.conversation.id }
                     ) { index ->
                         val item = conversations[index] ?: return@items
                         ConversationItem(
                             item          = item,
                             currentUserId = currentUserId,
                             onClick       = { conversationId ->
-                                // FIX: open ChatActivity directly — only navigate if
-                                //      a real conversationId exists (not blank)
                                 if (conversationId.isNotBlank()) {
                                     NavigationHelper.navigateToChat(context, conversationId)
                                 }
@@ -135,16 +131,21 @@ fun MessageScreen(
 private fun ConversationItem(
     item: ConversationWithUser,
     currentUserId: String,
-    // FIX: callback now passes conversationId (not peerId) — that's what ChatActivity needs
     onClick: (conversationId: String) -> Unit
 ) {
     val conversation = item.conversation
     val peerUser     = item.peerUser
 
-    val isGroup = conversation.isGroup
+    // FIX: Conversation.isGroup does not exist. Type is stored as a String field.
+    //      The correct check compares against ParticipantType.GROUP.value.
+    val isGroup = conversation.type == ParticipantType.GROUP.value
 
     val title = when {
-        isGroup          -> conversation.title.ifEmpty { "Unnamed Group" }
+        isGroup          -> {
+            // FIX: Conversation.title is String? (nullable); .ifEmpty() requires a
+            //      non-null receiver. Unwrap with .orEmpty() before calling .ifEmpty().
+            conversation.title.orEmpty().ifEmpty { "Unnamed Group" }
+        }
         peerUser != null -> peerUser.displayName.ifEmpty {
             peerUser.username.ifEmpty { "Unknown" }
         }
@@ -153,30 +154,26 @@ private fun ConversationItem(
 
     val avatarUrl = peerUser?.photoUrl ?: ""
 
-    val preview = conversation.lastMessage
+    // FIX: Conversation.lastMessage is String?, not a MessagePreview object.
+    //      The property accesses preview.type, preview.content, preview.senderId,
+    //      and preview.timestamp were all unresolved. The preview is now rendered
+    //      directly as a plain string. The "You: " sender prefix has been removed
+    //      because sender information is not available on the Conversation model.
+    val previewText = conversation.lastMessage
+        ?.takeIf { it.isNotBlank() }
+        ?: "No messages yet"
 
-    val previewText = when {
-        preview == null                                         -> "No messages yet"
-        preview.type == "text" && preview.content.isNotEmpty() -> preview.content
-        preview.type == "image"                                 -> "📷 Photo"
-        preview.type == "video"                                 -> "🎥 Video"
-        preview.type == "audio"                                 -> "🎵 Voice Message"
-        preview.type == "file"                                  -> "📎 File"
-        else                                                    -> "New message"
-    }
-
-    val prefix          = if (preview?.senderId == currentUserId) "You: " else ""
-    val displaySubtitle = "$prefix$previewText"
-
-    val timeString = preview?.timestamp?.toDate()?.let { date ->
+    // FIX: preview.timestamp was unresolved for the same reason above.
+    //      Conversation.updatedAt is the correct source for last-activity time.
+    val timeString = conversation.updatedAt?.toDate()?.let { date ->
         SimpleDateFormat("hh:mm a", Locale.getDefault()).format(date)
     } ?: ""
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // FIX: pass conversationId — ChatActivity reads EXTRA_CONVERSATION_ID
-            .clickable { onClick(conversation.conversationId) }
+            // FIX: Conversation.conversationId does not exist; correct field is id.
+            .clickable { onClick(conversation.id) }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -220,7 +217,7 @@ private fun ConversationItem(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text     = displaySubtitle,
+                text     = previewText,
                 style    = MaterialTheme.typography.bodyMedium,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

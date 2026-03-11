@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Bondhu"
 include(":app")
+include(":server")

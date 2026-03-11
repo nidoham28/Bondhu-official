@@ -32,8 +32,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nidoham.bondhu.ui.theme.LocalCustomColors
-import org.nidoham.server.domain.model.Message
-import org.nidoham.server.domain.model.MessageType
+import com.nidoham.server.domain.message.Message
+import com.nidoham.server.util.MessageType
 
 // ─── Instagram colour tokens ──────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ private val SentBubbleShape = RoundedCornerShape(
  */
 @Composable
 fun SentMessageWidget(
-    message:           Message,
+    message: Message,
     isLastSentMessage: Boolean,
     isReadByPeer:      Boolean,
     bubbleMaxWidth:    Dp,
@@ -126,8 +126,10 @@ fun SentMessageWidget(
 @Composable
 private fun SentBubbleContent(message: Message) {
     Column {
-        when (message.toType()) {
-            MessageType.IMAGE -> Text(
+        // FIX: message.toType() does not exist on Message. The type field is a
+        //      plain String; compare directly against MessageType enum values.
+        when (message.type) {
+            MessageType.IMAGE.name.lowercase() -> Text(
                 text      = "📷 Photo",
                 style     = MaterialTheme.typography.bodyMedium.copy(
                     color    = Color.White.copy(alpha = 0.85f),
@@ -146,7 +148,9 @@ private fun SentBubbleContent(message: Message) {
                 )
             }
         }
-        if (message.isEdited) {
+        // FIX: message.isEdited does not exist on Message. The edited state is
+        //      represented by editedAt: Timestamp?, which is null when unedited.
+        if (message.editedAt != null) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text  = "edited",

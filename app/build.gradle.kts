@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.nidoham.bondhu"
-        minSdk = 23
+        minSdk = 26
         targetSdk = 36
         versionCode = 3
         versionName = "1.0.2-alpha"
@@ -76,8 +76,6 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.database)
-    implementation(libs.firebase.storage)
-    implementation(libs.firebase.messaging)
 
     // Google Credential Manager (replaces deprecated GoogleSignInClient)
     implementation(libs.androidx.credentials)
@@ -94,11 +92,6 @@ dependencies {
     implementation(libs.androidx.exifinterface)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
-
-    // Room
-    implementation(libs.room.runtime)
-    implementation(libs.room.ktx)
-    ksp(libs.room.compiler)
 
     // DataStore
     implementation(libs.datastore.preferences)
@@ -134,4 +127,6 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    implementation(project(":server"))
 }

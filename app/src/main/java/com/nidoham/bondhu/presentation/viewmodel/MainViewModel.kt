@@ -2,26 +2,30 @@ package com.nidoham.bondhu.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nidoham.bondhu.data.repository.user.UserRepository
+import com.google.firebase.auth.FirebaseAuth
+import com.nidoham.server.domain.participant.User
+import com.nidoham.server.repository.participant.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import org.nidoham.server.domain.model.User
 import timber.log.Timber
 import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    // FIX: getCurrentUserId() did not exist on UserRepository.
+    //      FirebaseAuth is the authoritative source for the current user's UID.
+    private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
-    // Separate StateFlow for photoUrl — derived from _currentUser.
-    // UI collects this directly so it re-composes only when the URL actually changes.
+    // Derived StateFlow for photoUrl — UI collects this directly so it
+    // recomposes only when the URL actually changes.
     private val _profileImageUrl = MutableStateFlow<String?>(null)
     val profileImageUrl: StateFlow<String?> = _profileImageUrl.asStateFlow()
 
@@ -30,19 +34,21 @@ class MainViewModel @Inject constructor(
     }
 
     private fun loadCurrentUser() {
-        val uid = userRepository.getCurrentUserId()
+        // FIX: getCurrentUserId() did not exist on UserRepository.
+        val uid = firebaseAuth.currentUser?.uid
         if (uid == null) {
             Timber.w("MainViewModel: no authenticated user")
             return
         }
 
         viewModelScope.launch {
-            // Real-time Firestore listener — profile picture updates reflect immediately
-            userRepository.observeCurrentUser(uid).collect { user ->
-                _currentUser.value = user
-                _profileImageUrl.value = user?.photoUrl
-                Timber.d("MainViewModel: profile updated — photoUrl=${user?.photoUrl}")
-            }
+            // FIX: observeCurrentUser() did not exist on UserRepository.
+            //      UserRepository exposes no live profile stream; fetchCurrentUser()
+            //      is the correct one-shot API for loading the authenticated user's profile.
+            val user = userRepository.fetchCurrentUser(uid)
+            _currentUser.value = user
+            _profileImageUrl.value = user?.photoUrl
+            Timber.d("MainViewModel: profile loaded — photoUrl=${user?.photoUrl}")
         }
     }
 }

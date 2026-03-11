@@ -31,7 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import org.nidoham.server.domain.model.User
+import com.nidoham.server.domain.participant.User
 import org.nidoham.server.util.toFormattedCount // FIX: Use the utility we created earlier
 
 private val InstagramBlue = Color(0xFF0095F6)

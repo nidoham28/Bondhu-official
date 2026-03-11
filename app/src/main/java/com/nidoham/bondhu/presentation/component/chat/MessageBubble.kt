@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.nidoham.server.domain.model.Message
+import com.nidoham.server.domain.message.Message
 
 /**
  * Orchestrates the layout of a single message in the conversation list,
@@ -63,10 +63,13 @@ internal fun MessageBubble(
     peerName: String
 ) {
     // Early-exit for deleted messages: renders a tombstone in place of content.
-    if (message.deleted) {
-        DeletedMessageBubble(isMine)
-        return
-    }
+
+    /**
+     * if (message.deleted) {
+     *    DeletedMessageBubble(isMine)
+     *    return
+     *  }
+     */
 
     var showTimestamp by remember { mutableStateOf(false) }
     val timestamp = remember(message.timestamp) { message.timestamp?.toDate()?.toTimeString() }

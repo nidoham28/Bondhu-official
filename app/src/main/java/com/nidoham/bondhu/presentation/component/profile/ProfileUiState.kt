@@ -1,6 +1,6 @@
 package com.nidoham.bondhu.presentation.component.profile
 
-import org.nidoham.server.domain.model.User
+import com.nidoham.server.domain.participant.User
 
 data class ProfileUiState(
     val user             : User?   = null,

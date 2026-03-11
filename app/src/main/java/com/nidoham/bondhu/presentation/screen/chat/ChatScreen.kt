@@ -32,8 +32,8 @@ import com.nidoham.bondhu.presentation.component.chat.MessageList
 import com.nidoham.bondhu.presentation.component.chat.recentEmojis
 import com.nidoham.bondhu.presentation.component.chat.toWindowWidthClass
 import com.nidoham.bondhu.presentation.viewmodel.ChatUiState
+import com.nidoham.server.domain.message.Message
 import kotlinx.coroutines.launch
-import org.nidoham.server.domain.model.Message
 
 /**
  * Root composable for the one-to-one chat conversation screen.

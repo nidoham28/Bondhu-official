@@ -10,8 +10,6 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.Timestamp
-import com.nidoham.bondhu.data.repository.user.UserRepository
-import org.nidoham.server.domain.model.User
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,8 +21,10 @@ import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
 import androidx.core.net.toUri
+import com.nidoham.server.domain.participant.User
+import com.nidoham.server.manager.PresenceManager
+import com.nidoham.server.repository.participant.UserRepository
 import org.nidoham.server.data.api.GoogleAuthHelper
-import org.nidoham.server.data.repository.PresenceManager
 
 sealed interface AuthState {
     data object Idle : AuthState
@@ -100,8 +100,8 @@ class AuthViewModel @Inject constructor(
                 val generatedUsername = generateUsernameFromEmail(firebaseUser.email ?: "user")
                 val domainUser = firebaseUser.toDomainModel(generatedUsername)
 
-                val repoResult = userRepository.create(domainUser)
-
+                // FIX: createUser now returns Result<Unit>; check for failure before proceeding.
+                val repoResult = userRepository.createUser(domainUser)
                 if (repoResult.isSuccess) {
                     Timber.i("Email sign-up — uid: ${firebaseUser.uid}")
                     _authState.value = AuthState.Success(firebaseUser)
@@ -132,7 +132,8 @@ class AuthViewModel @Inject constructor(
                         val generatedUsername = generateGoogleUsername(firebaseUser)
                         val domainUser = firebaseUser.toDomainModel(generatedUsername)
 
-                        val repoResult = userRepository.create(domainUser)
+                        // FIX: createUser now returns Result<Unit>; check for failure before proceeding.
+                        val repoResult = userRepository.createUser(domainUser)
                         if (repoResult.isFailure) {
                             firebaseUser.delete().await()
                             throw Exception(
@@ -169,10 +170,6 @@ class AuthViewModel @Inject constructor(
             return
         }
 
-        // FIX: Removed incorrect presenceManager.onUserLogin() call here.
-        // Presence is already managed by the AuthStateListener in PresenceManager.init{}.
-        // Calling onUserLogin() mid-session is redundant and resets the connection listener.
-
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
@@ -183,11 +180,13 @@ class AuthViewModel @Inject constructor(
 
                 user.updateProfile(profileUpdates).await()
 
-                val updates = mutableMapOf<String, Any>()
-                displayName?.let { updates["displayName"] = it }
-                photoUrl?.let { updates["photoUrl"] = it }
-
-                val repoResult = userRepository.updateProfile(updates)
+                // FIX: Build the fields map here and pass user.uid explicitly.
+                // updateProfile(Map) now returns Result<Unit> so failure can be checked.
+                val fields = buildMap<String, Any> {
+                    displayName?.let { put("displayName", it) }
+                    photoUrl?.let { put("photoUrl", it) }
+                }
+                val repoResult = userRepository.updateProfile(user.uid, fields)
                 if (repoResult.isFailure) {
                     throw Exception(
                         repoResult.exceptionOrNull()?.message ?: "Firestore profile update failed"
@@ -198,9 +197,8 @@ class AuthViewModel @Inject constructor(
 
                 user.reload().await()
 
-                // FIX: Use auth.currentUser (post-reload) instead of the stale local 'user'
-                // reference, and emit it as AuthState.Success so the UI reflects the
-                // refreshed display name / photo URL immediately.
+                // Use auth.currentUser (post-reload) instead of the stale local 'user'
+                // reference so the UI reflects the refreshed display name / photo URL immediately.
                 val refreshedUser = auth.currentUser
                     ?: throw Exception("User was null after profile reload")
 
@@ -233,27 +231,30 @@ class AuthViewModel @Inject constructor(
             return
         }
 
-        // FIX: Capture uid before deletion. After user.delete(), auth.currentUser becomes
+        // Capture uid before deletion. After user.delete(), auth.currentUser becomes
         // null, so getProfileKey() would return "profileCompleted_null" and clear the
         // wrong SharedPreferences key.
         val uidToDelete = user.uid
 
-        // FIX: Changed onUserLogin() → onUserLogout(). The account is being permanently
-        // deleted; we must mark the user offline and tear down the presence listener,
-        // not re-initialize it.
         presenceManager.onUserLogout()
 
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
-                val softDeleteResult = userRepository.updateProfile(mapOf("isBanned" to true))
+                // FIX: Pass uidToDelete explicitly; updateProfile(Map) now returns Result<Unit>.
+                val softDeleteResult = userRepository.updateProfile(
+                    uid = uidToDelete,
+                    fields = mapOf("banned" to true)
+                )
                 if (softDeleteResult.isFailure) {
-                    Timber.w(softDeleteResult.exceptionOrNull(), "Soft-delete failed for uid: $uidToDelete, proceeding with hard delete")
+                    Timber.w(
+                        softDeleteResult.exceptionOrNull(),
+                        "Soft-delete failed for uid: $uidToDelete, proceeding with hard delete"
+                    )
                 }
 
                 user.delete().await()
 
-                // Clear the flag using the uid captured before deletion
                 prefs.edit { putBoolean("profileCompleted_$uidToDelete", false) }
 
                 Timber.i("Account deleted — uid: $uidToDelete")
@@ -270,15 +271,9 @@ class AuthViewModel @Inject constructor(
     @Suppress("unused")
     fun signOut() {
         Timber.i("Signing out — uid: ${auth.currentUser?.uid}")
-
-        // FIX: Changed onUserLogin() → onUserLogout(). The user is signing out, so we
-        // must mark them offline and clean up the presence listener, not re-initialize it.
         presenceManager.onUserLogout()
-
         auth.signOut()
         _authState.value = AuthState.Idle
-        // Note: We do NOT reset profileCompleted here.
-        // If the same user logs in again on this device, their profile status is remembered locally.
     }
 
     fun resetAuthState() {
@@ -328,7 +323,7 @@ class AuthViewModel @Inject constructor(
             bio = null,
             status = "Hey there! I am using Bondhu",
             verified = false,
-            isBanned = false,
+            banned = false,
             provider = this.providerData.firstOrNull()?.providerId ?: "firebase",
             createdAt = Timestamp.now(),
             updatedAt = Timestamp.now(),

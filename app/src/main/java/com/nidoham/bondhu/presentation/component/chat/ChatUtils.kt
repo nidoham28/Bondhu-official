@@ -1,7 +1,7 @@
 package com.nidoham.bondhu.presentation.component.chat
 
+import com.nidoham.server.domain.message.Message
 import org.nidoham.server.data.util.DEFAULT_RECENT_EMOJIS
-import org.nidoham.server.domain.model.Message
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
