@@ -15,7 +15,8 @@ object NavigationHelper {
 
     // Intent extras
     private const val EXTRA_USER_ID         = "extra_user_id"
-    const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"  // read by ChatActivity
+    const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"   // read by ChatActivity
+    const val EXTRA_TARGET_ID               = "extra_target_id"         // fixed: was "extra_conversation_id", causing key collision
 
     // ─────────────────────────────────────────────────────────────────────────
     // Transitions
@@ -83,17 +84,19 @@ object NavigationHelper {
     )
 
     /**
-     * Opens [ChatActivity] for the given [conversationId].
+     * Opens [ChatActivity] for the given [conversationId] and optional [targetUid].
      *
-     * ChatActivity reads the ID via:
+     * ChatActivity reads the values via:
      *   val conversationId = intent.getStringExtra(NavigationHelper.EXTRA_CONVERSATION_ID) ?: ""
+     *   val targetUid      = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
      *
-     * Uses a slide transition — feels natural when entering a chat from a profile.
+     * Uses a slide transition — feels natural when entering a chat from a list or profile.
      */
-    fun navigateToChat(context: Context, conversationId: String) {
+    fun navigateToChat(context: Context, conversationId: String, targetUid: String? = null) {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         val intent = Intent(context, ChatActivity::class.java).apply {
             putExtra(EXTRA_CONVERSATION_ID, conversationId)
+            targetUid?.let { putExtra(EXTRA_TARGET_ID, it) }   // guard: only written when non-null
         }
         launch(context = context, intent = intent, transition = slideTransition(context))
     }

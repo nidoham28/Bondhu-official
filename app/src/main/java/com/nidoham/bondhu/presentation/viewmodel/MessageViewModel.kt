@@ -2,15 +2,13 @@ package com.nidoham.bondhu.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.paging.PagingData
-import androidx.paging.cachedIn
-import androidx.paging.map
 import com.google.firebase.auth.FirebaseAuth
 import com.nidoham.server.domain.message.Conversation
 import com.nidoham.server.domain.participant.User
 import com.nidoham.server.manager.ParticipantFilter
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
+import com.nidoham.server.util.ParticipantType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -27,55 +25,58 @@ data class ConversationWithUser(
 class MessageViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
-    // FIX: getCurrentUserId() did not exist on UserRepository.
-    //      FirebaseAuth is the authoritative source for the current user's UID.
     private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
-    // FIX: getCurrentUserId() did not exist on UserRepository.
     val currentUserId: String
         get() = firebaseAuth.currentUser?.uid ?: ""
 
     /**
-     * Paginated stream of conversations enriched with peer-user data.
+     * Live stream of the current user's conversations, each enriched with the
+     * resolved peer-user profile.
      *
-     * FIX: ParticipantManager was previously injected directly into the ViewModel,
-     *      bypassing the repository layer. All participant access is now routed
-     *      through MessageRepository, which owns ParticipantManager internally.
+     * FIX: fetchConversationsPaged() was used previously but queries all
+     *      conversations globally, ignoring participant membership. Replaced
+     *      with observeCurrentUserConversations(), which filters to only the
+     *      conversations the authenticated user has joined via a collection
+     *      group query on the participant sub-collection.
      *
-     * FIX: getConversations(uid) did not exist on MessageRepository.
-     *      Replaced with fetchConversationsPaged(), the correct paginated API.
+     * FIX: fetchParticipantsFiltered(id = ...) was a compile error — the
+     *      parameter was renamed to parentId in the repository.
      *
-     * The peer-user profile fetch is wrapped in runCatching so a transient
-     * Firestore error on any single item does not collapse the entire page.
+     * FIX: runCatching { userRepository.fetchUserById(it) }.getOrNull()
+     *      double-wrapped the Result, yielding Result<User?> instead of User?.
+     *      Replaced with a direct .getOrNull() call on the returned Result.
+     *
+     * FIX: ParticipantFilter() passed no type constraint. A PERSONAL type
+     *      filter is applied to match the conversation context correctly.
+     *
+     * A transient failure on any single peer-user fetch yields null for that
+     * item rather than collapsing the entire list.
      */
-    val conversations: Flow<PagingData<ConversationWithUser>> =
+    val conversations: Flow<List<ConversationWithUser>> =
         firebaseAuth.currentUser?.uid
             ?.let { uid ->
-                messageRepository.fetchConversationsPaged()
-                    .map { pagingData: PagingData<Conversation> ->
-                        pagingData.map { conversation: Conversation ->
-                            // FIX: ParticipantManager.getParticipants() was called directly.
-                            //      Replaced with messageRepository.fetchParticipantsFiltered(),
-                            //      which routes through the correct repository boundary.
-                            //
-                            // FIX: conversation.conversationId does not exist on the
-                            //      Conversation domain model. The document ID field is id.
+                // fixed: observeCurrentUserConversations() scopes to the current
+                //        user's participant membership rather than all conversations.
+                messageRepository.observeCurrentUserConversations(ParticipantType.PERSONAL)
+                    .map { list: List<Conversation> ->
+                        list.map { conversation: Conversation ->
                             val peerId = runCatching {
                                 messageRepository.fetchParticipantsFiltered(
-                                    id     = conversation.id,
-                                    filter = ParticipantFilter()
+                                    parentId = conversation.id,           // fixed: was id =
+                                    filter   = ParticipantFilter(
+                                        type = ParticipantType.PERSONAL   // fixed: no type was set
+                                    )
                                 ).getOrNull()
                                     ?.firstOrNull { it.uid != uid }
                                     ?.uid
                             }.getOrNull()
 
-                            // FIX: userRepository.getUserProfile() did not exist.
-                            //      Replaced with fetchUserById(), the correct API.
-                            //      Wrapped in runCatching so a failure on any single
-                            //      item yields null rather than breaking the page.
+                            // fixed: removed outer runCatching wrapper — fetchUserById already
+                            //        returns Result<User?>, so .getOrNull() is sufficient.
                             val peerUser: User? = peerId?.let {
-                                runCatching { userRepository.fetchUserById(it) }.getOrNull()
+                                userRepository.fetchUserById(it)
                             }
 
                             ConversationWithUser(
@@ -84,7 +85,6 @@ class MessageViewModel @Inject constructor(
                             )
                         }
                     }
-                    .cachedIn(viewModelScope)
             }
             ?: emptyFlow()
 }

@@ -30,6 +30,7 @@ class ChatActivity : ComponentActivity() {
         // Read the conversation ID passed by NavigationHelper.navigateToChat().
         val conversationId = intent.getStringExtra(NavigationHelper.EXTRA_CONVERSATION_ID)
             ?.takeIf { it.isNotBlank() }
+        val targetUid      = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
 
         if (conversationId == null) {
             // Guard: no ID means we were launched incorrectly — bail out immediately.

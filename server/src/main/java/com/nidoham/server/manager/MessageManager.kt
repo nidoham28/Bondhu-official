@@ -39,7 +39,7 @@ class MessageManager(
 ) {
 
     companion object {
-        private const val CONVERSATION_COLLECTION = "conversations"
+        private const val CONVERSATION_COLLECTION = "message"
         private const val MESSAGE_SUB_COLLECTION  = "messages"
         private const val PAGE_SIZE               = 30
 

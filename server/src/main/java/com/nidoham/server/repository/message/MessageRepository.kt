@@ -407,8 +407,7 @@ class MessageRepository(
 
     /**
      * Returns a cursor-paginated [Flow] of [PagingData] over the messages
-     * sub-collection, ordered by timestamp descending — the standard pattern
-     * for chat UIs.
+     * sub-collection, ordered by timestamp descending.
      *
      * @param conversationId The parent conversation ID.
      * @param pageSize       Number of documents to load per page.
@@ -440,161 +439,167 @@ class MessageRepository(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Adds a participant to the given conversation. Both [Participant.uid] and
-     * [Participant.id] are validated before the write is issued.
+     * Adds a participant to the given parent document. Both [Participant.uid] and
+     * [Participant.parentId] are validated before the write is issued.
      *
-     * @param id          The parent conversation ID.
-     * @param userId      The participant's Firebase UID.
+     * @param parentId    The community / group / conversation document ID.
+     * @param uid         The participant's Firebase UID.
      * @param participant The [Participant] object to persist.
      */
     suspend fun addParticipant(
-        id: String,
-        userId: String,
+        parentId: String,
+        uid: String,
         participant: Participant
-    ): Result<Unit> = participantManager.addParticipant(id, userId, participant)
+    ): Result<Unit> = participantManager.addParticipant(parentId, uid, participant)
 
     /**
-     * Adds multiple participants to the same conversation in a single atomic
+     * Adds multiple participants to the same parent document in a single atomic
      * batch write.
      *
-     * @param id           The parent conversation ID.
-     * @param participants A map of userId to [Participant] entries to persist.
+     * @param parentId     The community / group / conversation document ID.
+     * @param participants A map of uid to [Participant] entries to persist.
      */
     suspend fun addParticipantsBatch(
-        id: String,
+        parentId: String,
         participants: Map<String, Participant>
-    ): Result<Unit> = participantManager.addParticipantsBatch(id, participants)
+    ): Result<Unit> = participantManager.addParticipantsBatch(parentId, participants)
 
     /**
      * Updates specific fields on an existing participant document.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
-     * @param fields A map of Firestore field names to their new values.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
+     * @param fields   A map of Firestore field names to their new values.
      */
     suspend fun updateParticipant(
-        id: String,
-        userId: String,
+        parentId: String,
+        uid: String,
         fields: Map<String, Any?>
-    ): Result<Unit> = participantManager.updateParticipant(id, userId, fields)
+    ): Result<Unit> = participantManager.updateParticipant(parentId, uid, fields)
 
     /**
      * Promotes a participant to the [ParticipantRole.ADMIN] role.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    suspend fun promoteToAdmin(id: String, userId: String): Result<Unit> =
-        participantManager.promoteToAdmin(id, userId)
+    suspend fun promoteToAdmin(parentId: String, uid: String): Result<Unit> =
+        participantManager.promoteToAdmin(parentId, uid)
 
     /**
      * Demotes a participant back to the [ParticipantRole.MEMBER] role.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    suspend fun demoteToMember(id: String, userId: String): Result<Unit> =
-        participantManager.demoteToMember(id, userId)
+    suspend fun demoteToMember(parentId: String, uid: String): Result<Unit> =
+        participantManager.demoteToMember(parentId, uid)
 
     /**
-     * Removes a specific participant from the given conversation.
+     * Removes a specific participant from the given parent document.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    suspend fun removeParticipant(id: String, userId: String): Result<Unit> =
-        participantManager.removeParticipant(id, userId)
+    suspend fun removeParticipant(parentId: String, uid: String): Result<Unit> =
+        participantManager.removeParticipant(parentId, uid)
 
     /**
-     * Removes multiple participants from the same conversation in a single
+     * Removes multiple participants from the same parent document in a single
      * batch write.
      *
-     * @param id      The parent conversation ID.
-     * @param userIds The UIDs of the participants to remove.
+     * @param parentId The community / group / conversation document ID.
+     * @param uids     The UIDs of the participants to remove.
      */
     suspend fun removeParticipantsBatch(
-        id: String,
-        userIds: List<String>
-    ): Result<Unit> = participantManager.removeParticipantsBatch(id, userIds)
+        parentId: String,
+        uids: List<String>
+    ): Result<Unit> = participantManager.removeParticipantsBatch(parentId, uids)
 
     /**
-     * Removes the currently authenticated user from the given conversation.
+     * Removes the currently authenticated user from the given parent document.
      *
-     * @param id The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      */
-    suspend fun leaveConversation(id: String): Result<Unit> =
-        participantManager.leaveTarget(id)
+    suspend fun leaveConversation(parentId: String): Result<Unit> =
+        participantManager.leaveTarget(parentId)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Participant — Read
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Fetches a single participant document by conversation ID and user ID.
+     * Fetches a single participant document by parent ID and user UID.
      *
      * @return The [Participant] object, or null if the document does not exist.
      */
-    suspend fun fetchParticipant(id: String, userId: String): Result<Participant?> =
-        participantManager.fetchParticipant(id, userId)
+    suspend fun fetchParticipant(parentId: String, uid: String): Result<Participant?> =
+        participantManager.fetchParticipant(parentId, uid)
 
     /**
-     * Fetches multiple participant documents by their user IDs in a single
-     * batch read. Documents that do not exist are silently omitted.
+     * Fetches multiple participant documents by their UIDs in a single batch read.
+     * Documents that do not exist are silently omitted.
      *
-     * @param id      The parent conversation ID.
-     * @param userIds The UIDs to retrieve.
+     * @param parentId The community / group / conversation document ID.
+     * @param uids     The UIDs to retrieve.
      */
     suspend fun fetchParticipantsByIds(
-        id: String,
-        userIds: List<String>
+        parentId: String,
+        uids: List<String>
     ): Result<List<Participant>> =
-        participantManager.fetchParticipantsByIds(id, userIds)
+        participantManager.fetchParticipantsByIds(parentId, uids)
 
     /**
-     * Returns true if a participant document exists for the given user in the
-     * given conversation.
+     * Returns true if a participant document exists for the given user under
+     * the given parent document.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    suspend fun isParticipant(id: String, userId: String): Result<Boolean> =
-        participantManager.isParticipant(id, userId)
+    suspend fun isParticipant(parentId: String, uid: String): Result<Boolean> =
+        participantManager.isParticipant(parentId, uid)
 
     /**
      * Fetches the participant record for the currently authenticated user within
-     * the given conversation.
+     * the given parent document.
      *
-     * @param id The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      */
-    suspend fun fetchCurrentUserParticipant(id: String): Result<Participant?> =
-        participantManager.fetchCurrentUserParticipant(id)
+    suspend fun fetchCurrentUserParticipant(parentId: String): Result<Participant?> =
+        participantManager.fetchCurrentUserParticipant(parentId)
 
     /**
-     * Resolves the stored [Participant.id] field for a given user within a
-     * conversation, filtered by participant type. Defaults to
-     * [ParticipantType.PERSONAL].
+     * Resolves the [Participant.parentId] for a given user across all participant
+     * sub-collections, filtered by participant type.
      *
-     * @param userId   The participant's Firebase UID.
-     * @param targetId The parent conversation ID.
-     * @param type     Participant type filter.
+     * This performs a collection group query and reads the [parent_id] field
+     * stored in the matching document. The [targetId] parameter from the old
+     * implementation has been removed because the lookup no longer targets a
+     * specific known document.
+     *
+     * Requires a composite Firestore index on (uid, type) in the member
+     * collection group.
+     *
+     * @param uid  The participant's Firebase UID.
+     * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
+     * @return The parentId of the first matching participant document, or null.
      */
-    suspend fun fetchParticipantId(
-        userId: String,
-        targetId: String,
+    suspend fun fetchParentId(                                          // fixed: was fetchParticipantId
+        uid: String,
         type: ParticipantType = ParticipantType.PERSONAL
-    ): Result<String?> = participantManager.fetchId(userId, targetId, type)
+    ): Result<String?> = participantManager.fetchParentId(uid, type)   // fixed: removed targetId, updated delegation
 
     /**
-     * Fetches all parent conversation IDs that a given user has joined,
-     * filtered by participant type.
+     * Fetches all parent document IDs (community, group, or conversation IDs)
+     * that a given user has joined, filtered by participant type.
      *
-     * @param userId The UID to search across all participant sub-collections.
-     * @param type   Participant type filter; defaults to [ParticipantType.PERSONAL].
+     * @param uid  The UID to search across all participant sub-collections.
+     * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
      */
     suspend fun fetchJoinedIds(
-        userId: String,
+        uid: String,
         type: ParticipantType = ParticipantType.PERSONAL
-    ): Result<List<String>> = participantManager.fetchJoinedIds(userId, type)
+    ): Result<List<String>> = participantManager.fetchJoinedIds(uid, type)
 
     /**
      * Fetches all participant records for the currently authenticated user,
@@ -608,37 +613,37 @@ class MessageRepository(
         participantManager.fetchCurrentUserJoinedList(type)
 
     /**
-     * Returns the total number of participants within the given conversation.
+     * Returns the total number of participants within the given parent document.
      *
-     * @param id The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      */
-    suspend fun fetchParticipantCount(id: String): Result<Int> =
-        participantManager.fetchParticipantCount(id)
+    suspend fun fetchParticipantCount(parentId: String): Result<Int> =
+        participantManager.fetchParticipantCount(parentId)
 
     /**
      * Returns the number of participants matching a specific role within the
-     * given conversation.
+     * given parent document.
      *
-     * @param id   The parent conversation ID.
-     * @param role The role to count.
+     * @param parentId The community / group / conversation document ID.
+     * @param role     The role to count.
      */
     suspend fun fetchParticipantCountByRole(
-        id: String,
+        parentId: String,
         role: ParticipantRole
-    ): Result<Int> = participantManager.fetchParticipantCountByRole(id, role)
+    ): Result<Int> = participantManager.fetchParticipantCountByRole(parentId, role)
 
     /**
      * Applies a [ParticipantFilter] and returns all matching participant records
      * as a plain list.
      *
-     * @param id     The parent conversation ID.
-     * @param filter The [ParticipantFilter] describing the desired constraints.
+     * @param parentId The community / group / conversation document ID.
+     * @param filter   The [ParticipantFilter] describing the desired constraints.
      */
     suspend fun fetchParticipantsFiltered(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter
     ): Result<List<Participant>> =
-        participantManager.fetchParticipantsFiltered(id, filter)
+        participantManager.fetchParticipantsFiltered(parentId, filter)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Participant — Real-Time
@@ -648,86 +653,86 @@ class MessageRepository(
      * Emits the latest state of a single participant document in real time.
      * Emits null if the document is deleted.
      *
-     * @param id     The parent conversation ID.
-     * @param userId The participant's Firebase UID.
+     * @param parentId The community / group / conversation document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    fun observeParticipant(id: String, userId: String): Flow<Participant?> =
-        participantManager.observeParticipant(id, userId)
+    fun observeParticipant(parentId: String, uid: String): Flow<Participant?> =
+        participantManager.observeParticipant(parentId, uid)
 
     /**
-     * Emits an updated list of [Participant] objects whenever the participants
+     * Emits an updated list of [Participant] objects whenever the member
      * sub-collection changes. An optional [ParticipantFilter] narrows the query.
      *
-     * @param id     The parent conversation ID.
-     * @param filter Optional [ParticipantFilter] to restrict the observed query.
+     * @param parentId The community / group / conversation document ID.
+     * @param filter   Optional [ParticipantFilter] to restrict the observed query.
      */
     fun observeParticipants(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter? = null
     ): Flow<List<Participant>> =
-        participantManager.observeParticipants(id, filter)
+        participantManager.observeParticipants(parentId, filter)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Participant — Paging
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a cursor-paginated [Flow] of [PagingData] over the participants
+     * Returns a cursor-paginated [Flow] of [PagingData] over the member
      * sub-collection, ordered by join date ascending.
      *
-     * @param id       The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsPaged(
-        id: String,
+        parentId: String,
         pageSize: Int = 20
     ): Flow<PagingData<Participant>> =
-        participantManager.fetchParticipantsPaged(id, pageSize)
+        participantManager.fetchParticipantsPaged(parentId, pageSize)
 
     /**
      * Returns a cursor-paginated [Flow] of [PagingData] filtered to a specific
      * [ParticipantRole].
      *
-     * @param id       The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      * @param role     The role to filter by.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsByRolePaged(
-        id: String,
+        parentId: String,
         role: ParticipantRole,
         pageSize: Int = 20
     ): Flow<PagingData<Participant>> =
-        participantManager.fetchParticipantsByRolePaged(id, role, pageSize)
+        participantManager.fetchParticipantsByRolePaged(parentId, role, pageSize)
 
     /**
      * Returns a cursor-paginated [Flow] of [PagingData] filtered to a specific
      * [ParticipantType], defaulting to [ParticipantType.PERSONAL].
      *
-     * @param id       The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      * @param type     The participant type to filter by.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsByTypePaged(
-        id: String,
+        parentId: String,
         type: ParticipantType = ParticipantType.PERSONAL,
         pageSize: Int = 20
     ): Flow<PagingData<Participant>> =
-        participantManager.fetchParticipantsByTypePaged(id, type, pageSize)
+        participantManager.fetchParticipantsByTypePaged(parentId, type, pageSize)
 
     /**
      * Returns a cursor-paginated [Flow] of [PagingData] applying a
      * [ParticipantFilter] for fully custom participant queries.
      *
-     * @param id       The parent conversation ID.
+     * @param parentId The community / group / conversation document ID.
      * @param filter   The [ParticipantFilter] to apply.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsFilteredPaged(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter,
         pageSize: Int = 20
     ): Flow<PagingData<Participant>> =
-        participantManager.fetchParticipantsFilteredPaged(id, filter, pageSize)
+        participantManager.fetchParticipantsFilteredPaged(parentId, filter, pageSize)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Search — Conversation
@@ -737,18 +742,9 @@ class MessageRepository(
      * Searches conversations whose [title] field begins with [prefix] using a
      * Firestore lexicographic range query. Results are ordered by title ascending.
      *
-     * Firestore does not support native full-text search. This method performs
-     * prefix matching only. For case-insensitive matching, store titles in
-     * lowercase and supply a lowercased [prefix].
-     *
-     * An ascending index on `title` is required. An optional [ConversationFilter]
-     * may add equality constraints (type, creatorId, translated) without requiring
-     * a separate query.
-     *
      * @param prefix The title prefix to match. Must not be blank.
      * @param filter Optional [ConversationFilter] for additional equality constraints.
      * @param limit  Maximum number of results to return. Defaults to 20.
-     * @return A list of matching [Conversation] objects ordered by title ascending.
      */
     suspend fun searchConversationsByTitle(
         prefix: String,
@@ -761,11 +757,8 @@ class MessageRepository(
      * Searches conversations whose [subtitle] field begins with [prefix].
      * Uses the same lexicographic range strategy as [searchConversationsByTitle].
      *
-     * Requires an ascending index on `subtitle`.
-     *
      * @param prefix The subtitle prefix to match. Must not be blank.
      * @param limit  Maximum number of results to return. Defaults to 20.
-     * @return A list of matching [Conversation] objects ordered by subtitle ascending.
      */
     suspend fun searchConversationsBySubtitle(
         prefix: String,
@@ -793,10 +786,8 @@ class MessageRepository(
      * documents matching the given title [prefix] change. Suitable for a search
      * bar that refreshes results as the user types.
      *
-     * The underlying listener is removed automatically when the flow is cancelled.
-     *
-     * @param prefix The title prefix to observe. An empty or blank string emits
-     *               an empty list immediately without attaching a listener.
+     * @param prefix The title prefix to observe. A blank string emits an empty
+     *               list immediately without attaching a listener.
      * @param filter Optional [ConversationFilter] for additional constraints.
      * @param limit  Maximum number of live results to stream. Defaults to 20.
      */
@@ -813,17 +804,13 @@ class MessageRepository(
 
     /**
      * Searches messages within a conversation whose [content] field begins with
-     * [prefix]. Results are ordered by content ascending. An optional
-     * [MessageFilter] may add sender, type, or status constraints.
-     *
-     * Requires an ascending index on `content`. For case-insensitive matching,
-     * normalise message content to lowercase at write time.
+     * [prefix]. An optional [MessageFilter] may add sender, type, or status
+     * constraints.
      *
      * @param conversationId The parent conversation ID to search within.
      * @param prefix         The content prefix to match. Must not be blank.
      * @param filter         Optional [MessageFilter] for additional constraints.
      * @param limit          Maximum number of results to return. Defaults to 20.
-     * @return A list of matching [Message] objects ordered by content ascending.
      */
     suspend fun searchMessagesByContent(
         conversationId: String,
@@ -870,8 +857,6 @@ class MessageRepository(
      * the reply thread for [parentMessageId] changes. Results are ordered by
      * timestamp ascending.
      *
-     * The underlying listener is removed automatically when the flow is cancelled.
-     *
      * @param conversationId  The parent conversation ID.
      * @param parentMessageId The message ID referenced in each reply's [reply_to] field.
      * @param limit           Maximum number of live results to stream. Defaults to 30.
@@ -890,10 +875,6 @@ class MessageRepository(
     /**
      * Records that the currently authenticated user has started or stopped
      * typing in the given conversation.
-     *
-     * When [typing] is true, a server timestamp heartbeat is written for the
-     * user. When false, the field is deleted. Safe to call repeatedly from a
-     * debounced text-change listener.
      *
      * @param conversationId The conversation in which the typing event occurred.
      * @param typing         True if the user is currently typing; false otherwise.
@@ -914,7 +895,7 @@ class MessageRepository(
         typingManager.clearTyping(conversationId)
 
     /**
-     * Clears the typing indicator for a specific user, regardless of which user
+     * Clears the typing indicator for a specific user regardless of which user
      * is currently authenticated. Intended for administrative use cases.
      *
      * @param conversationId The conversation to clear the indicator for.
@@ -927,8 +908,7 @@ class MessageRepository(
 
     /**
      * Deletes the entire typing document for the given conversation, clearing
-     * all active indicators simultaneously. Appropriate when a conversation is
-     * archived, closed, or all participants have left.
+     * all active indicators simultaneously.
      *
      * @param conversationId The conversation whose typing document should be deleted.
      */
@@ -943,20 +923,6 @@ class MessageRepository(
      * Returns a [Flow] that emits an updated [TypingState] whenever the set of
      * actively typing users in the given conversation changes. Stale entries
      * older than [TypingManager.TYPING_TIMEOUT_MS] are automatically excluded.
-     *
-     * The flow degrades gracefully on transient Firestore errors, always emitting
-     * a safe empty state rather than propagating an exception to the UI.
-     *
-     * Recommended ViewModel usage:
-     * ```kotlin
-     * val typingState = repository
-     *     .observeTyping(conversationId)
-     *     .stateIn(
-     *         scope        = viewModelScope,
-     *         started      = SharingStarted.WhileSubscribed(5_000),
-     *         initialValue = TypingState(conversationId, emptyList())
-     *     )
-     * ```
      *
      * @param conversationId The conversation to observe.
      * @param onError        Optional callback for non-fatal Firestore errors.

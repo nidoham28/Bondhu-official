@@ -22,11 +22,11 @@ import kotlinx.coroutines.tasks.await
 /**
  * Manages all participant-related Firestore operations.
  *
- * Firestore schema : participant/{id}/participants/{userId}
+ * Firestore schema : participant/{parentId}/member/{uid}
  *
  * Every write and read operation is keyed by exactly two identifiers:
- *   - [id]     : the parent document ID (group, channel, conversation, etc.)
- *   - [userId] : the participant's Firebase UID
+ *   - [parentId] : the community, group, channel, or page document ID.
+ *   - [uid]      : the participant's Firebase UID (also the Firestore document ID).
  *
  * @param firestore Injectable [FirebaseFirestore] instance.
  * @param auth      Injectable [FirebaseAuth] instance.
@@ -38,11 +38,11 @@ class ParticipantManager(
 
     companion object {
         private const val ROOT_COLLECTION = "participant"
-        private const val SUB_COLLECTION  = "participants"
+        private const val SUB_COLLECTION  = "member"          // participant/{parentId}/member/{uid}
         private const val PAGE_SIZE       = 20
 
-        private const val FIELD_USER_ID   = "uid"
-        private const val FIELD_ID        = "id"
+        private const val FIELD_UID       = "uid"
+        private const val FIELD_PARENT_ID = "parent_id"
         private const val FIELD_ROLE      = "role"
         private const val FIELD_TYPE      = "type"
         private const val FIELD_JOINED_AT = "joined_at"
@@ -52,70 +52,70 @@ class ParticipantManager(
     // References
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun participantsCollection(id: String) =
+    private fun memberCollection(parentId: String) =
         firestore.collection(ROOT_COLLECTION)
-            .document(id)
+            .document(parentId)
             .collection(SUB_COLLECTION)
 
     /**
      * Resolves the document reference for a single participant.
-     * The document path is always: participant/{id}/participants/{userId}
+     * Path: participant/{parentId}/member/{uid}
      */
-    private fun participantDocument(id: String, userId: String) =
-        participantsCollection(id).document(userId)
+    private fun memberDocument(parentId: String, uid: String) =
+        memberCollection(parentId).document(uid)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Write Operations
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Adds a participant under participant/{id}/participants/{userId}.
+     * Adds a participant under participant/{parentId}/member/{uid}.
      *
-     * Both [Participant.uid] and [Participant.id] are validated before the
-     * write is issued.
+     * Both [Participant.uid] and [Participant.parentId] are validated against
+     * the provided path identifiers before the write is issued.
      *
-     * @param id          Parent document ID.
-     * @param userId      Participant's Firebase UID.
+     * @param parentId    The community / group / page document ID.
+     * @param uid         The participant's Firebase UID.
      * @param participant The [Participant] object to persist.
      */
     suspend fun addParticipant(
-        id: String,
-        userId: String,
+        parentId: String,
+        uid: String,
         participant: Participant
     ): Result<Unit> = runCatching {
-        require(participant.uid == userId) {
-            "Participant uid ('${participant.uid}') must match the provided userId ('$userId')."
+        require(participant.uid == uid) {
+            "Participant uid ('${participant.uid}') must match the provided uid ('$uid')."
         }
-        require(!participant.id.isNullOrBlank()) {
-            "Participant id must not be null or blank."
+        require(participant.parentId == parentId) {
+            "Participant parentId ('${participant.parentId}') must match the provided parentId ('$parentId')."
         }
-        participantDocument(id, userId).set(participant).await()
+        memberDocument(parentId, uid).set(participant).await()
     }
 
     /**
      * Adds multiple participants to the same parent document in a single
-     * Firestore batch, reducing round-trips and write costs.
+     * Firestore batch, reducing round-trips and ensuring atomic writes.
      *
-     * All entries that fail the uid/id validation are rejected and the entire
-     * batch is not committed; this ensures atomic, all-or-nothing semantics.
+     * All entries are validated before the batch is committed; a single
+     * validation failure aborts the entire operation.
      *
-     * @param id           Parent document ID.
-     * @param participants A map of userId → [Participant] entries to persist.
+     * @param parentId     The community / group / page document ID.
+     * @param participants A map of uid → [Participant] entries to persist.
      */
     suspend fun addParticipantsBatch(
-        id: String,
+        parentId: String,
         participants: Map<String, Participant>
     ): Result<Unit> = runCatching {
         require(participants.isNotEmpty()) { "Participants map must not be empty." }
         val batch = firestore.batch()
-        participants.forEach { (userId, participant) ->
-            require(participant.uid == userId) {
-                "Participant uid ('${participant.uid}') must match userId ('$userId')."
+        participants.forEach { (uid, participant) ->
+            require(participant.uid == uid) {
+                "Participant uid ('${participant.uid}') must match uid ('$uid')."
             }
-            require(!participant.id.isNullOrBlank()) {
-                "Participant id must not be null or blank for userId '$userId'."
+            require(participant.parentId == parentId) {
+                "Participant parentId must match parentId '$parentId' for uid '$uid'."
             }
-            batch.set(participantDocument(id, userId), participant)
+            batch.set(memberDocument(parentId, uid), participant)
         }
         batch.commit().await()
     }
@@ -123,67 +123,61 @@ class ParticipantManager(
     /**
      * Updates specific fields of an existing participant document.
      *
-     * @param id     Parent document ID.
-     * @param userId Participant's Firebase UID.
-     * @param fields Map of Firestore field names to their new values.
+     * @param parentId The community / group / page document ID.
+     * @param uid      The participant's Firebase UID.
+     * @param fields   Map of Firestore field names to their new values.
      */
     suspend fun updateParticipant(
-        id: String,
-        userId: String,
+        parentId: String,
+        uid: String,
         fields: Map<String, Any?>
     ): Result<Unit> = runCatching {
         require(fields.isNotEmpty()) { "Update fields must not be empty." }
-        participantDocument(id, userId).update(fields).await()
+        memberDocument(parentId, uid).update(fields).await()
     }
 
-    /**
-     * Promotes a participant to the [ParticipantRole.ADMIN] role.
-     */
-    suspend fun promoteToAdmin(id: String, userId: String): Result<Unit> =
-        updateParticipant(id, userId, mapOf(FIELD_ROLE to ParticipantRole.ADMIN.value))
+    /** Promotes a participant to [ParticipantRole.ADMIN]. */
+    suspend fun promoteToAdmin(parentId: String, uid: String): Result<Unit> =
+        updateParticipant(parentId, uid, mapOf(FIELD_ROLE to ParticipantRole.ADMIN.value))
+
+    /** Demotes a participant back to [ParticipantRole.MEMBER]. */
+    suspend fun demoteToMember(parentId: String, uid: String): Result<Unit> =
+        updateParticipant(parentId, uid, mapOf(FIELD_ROLE to ParticipantRole.MEMBER.value))
 
     /**
-     * Demotes a participant back to [ParticipantRole.MEMBER] role.
-     */
-    suspend fun demoteToMember(id: String, userId: String): Result<Unit> =
-        updateParticipant(id, userId, mapOf(FIELD_ROLE to ParticipantRole.MEMBER.value))
-
-    /**
-     * Removes the participant document at participant/{id}/participants/{userId}.
+     * Removes the participant document at participant/{parentId}/member/{uid}.
      *
-     * @param id     Parent document ID.
-     * @param userId Participant's Firebase UID.
+     * @param parentId The community / group / page document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    suspend fun removeParticipant(id: String, userId: String): Result<Unit> = runCatching {
-        participantDocument(id, userId).delete().await()
+    suspend fun removeParticipant(parentId: String, uid: String): Result<Unit> = runCatching {
+        memberDocument(parentId, uid).delete().await()
     }
 
     /**
      * Removes multiple participants from the same parent document in a single
      * Firestore batch.
      *
-     * @param id      Parent document ID.
-     * @param userIds The UIDs of the participants to remove.
+     * @param parentId The community / group / page document ID.
+     * @param uids     The UIDs of the participants to remove.
      */
     suspend fun removeParticipantsBatch(
-        id: String,
-        userIds: List<String>
+        parentId: String,
+        uids: List<String>
     ): Result<Unit> = runCatching {
-        require(userIds.isNotEmpty()) { "userIds must not be empty." }
+        require(uids.isNotEmpty()) { "uids must not be empty." }
         val batch = firestore.batch()
-        userIds.forEach { userId ->
-            batch.delete(participantDocument(id, userId))
-        }
+        uids.forEach { uid -> batch.delete(memberDocument(parentId, uid)) }
         batch.commit().await()
     }
 
     /**
      * Removes the currently authenticated user from the given parent document.
      */
-    suspend fun leaveTarget(id: String): Result<Unit> {
-        val currentUserId = auth.currentUser?.uid
+    suspend fun leaveTarget(parentId: String): Result<Unit> {
+        val currentUid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("No authenticated user is signed in."))
-        return removeParticipant(id, currentUserId)
+        return removeParticipant(parentId, currentUid)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -191,12 +185,12 @@ class ParticipantManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Fetches a single participant document at participant/{id}/participants/{userId}.
+     * Fetches a single participant document at participant/{parentId}/member/{uid}.
      *
      * @return The [Participant] object, or null if the document does not exist.
      */
-    suspend fun fetchParticipant(id: String, userId: String): Result<Participant?> = runCatching {
-        participantDocument(id, userId)
+    suspend fun fetchParticipant(parentId: String, uid: String): Result<Participant?> = runCatching {
+        memberDocument(parentId, uid)
             .get()
             .await()
             .toObject(Participant::class.java)
@@ -206,80 +200,90 @@ class ParticipantManager(
      * Fetches multiple participant documents by their UIDs in a single batch read.
      * Documents that do not exist are silently omitted from the result.
      *
-     * @param id      Parent document ID.
-     * @param userIds The UIDs to retrieve.
-     * @return A list of [Participant] objects that were found.
+     * @param parentId The community / group / page document ID.
+     * @param uids     The UIDs to retrieve.
      */
     suspend fun fetchParticipantsByIds(
-        id: String,
-        userIds: List<String>
+        parentId: String,
+        uids: List<String>
     ): Result<List<Participant>> = runCatching {
-        require(userIds.isNotEmpty()) { "userIds must not be empty." }
-        userIds
-            .map { userId -> participantDocument(id, userId).get().await() }
+        require(uids.isNotEmpty()) { "uids must not be empty." }
+        uids
+            .map { uid -> memberDocument(parentId, uid).get().await() }
             .mapNotNull { it.toObject(Participant::class.java) }
     }
 
     /**
      * Checks whether a participant document exists at
-     * participant/{id}/participants/{userId}.
+     * participant/{parentId}/member/{uid}.
      */
-    suspend fun isParticipant(id: String, userId: String): Result<Boolean> = runCatching {
-        participantDocument(id, userId).get().await().exists()
+    suspend fun isParticipant(parentId: String, uid: String): Result<Boolean> = runCatching {
+        memberDocument(parentId, uid).get().await().exists()
     }
 
     /**
      * Fetches the participant record for the currently authenticated user
      * within the given parent document.
      */
-    suspend fun fetchCurrentUserParticipant(id: String): Result<Participant?> {
-        val currentUserId = auth.currentUser?.uid
+    suspend fun fetchCurrentUserParticipant(parentId: String): Result<Participant?> {
+        val currentUid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("No authenticated user is signed in."))
-        return fetchParticipant(id, currentUserId)
+        return fetchParticipant(parentId, currentUid)
     }
 
     /**
-     * Resolves the stored [Participant.id] field for a given user within a target,
-     * filtered by participant type (defaults to [ParticipantType.PERSONAL]).
+     * Resolves the stored [Participant.parentId] for a given user, filtered by
+     * participant type (defaults to [ParticipantType.PERSONAL]).
      *
-     * @param userId   The participant's Firebase UID.
-     * @param targetId The parent document ID to look up within.
-     * @param type     Participant type filter; defaults to [ParticipantType.PERSONAL].
-     * @return The [Participant.id] value if the document exists and type matches, null otherwise.
-     */
-    suspend fun fetchId(
-        userId: String,
-        targetId: String,
-        type: ParticipantType = ParticipantType.PERSONAL
-    ): Result<String?> = runCatching {
-        val participant = participantDocument(targetId, userId)
-            .get()
-            .await()
-            .toObject(Participant::class.java)
-        participant?.takeIf { it.type == type.value }?.id
-    }
-
-    /**
-     * Fetches all parent document IDs that a given user has joined,
-     * filtered by participant type (defaults to [ParticipantType.PERSONAL]).
+     * Uses a collection group query because the parentId is not known in advance.
+     * The parentId is read from the [FIELD_PARENT_ID] field stored in the document,
+     * ensuring the returned value always reflects the actual community/group ID.
      *
      * Requires a composite Firestore index on (uid, type).
      *
-     * @param userId The UID to search across all participant sub-collections.
-     * @param type   Participant type filter; defaults to [ParticipantType.PERSONAL].
-     * @return A list of parent document IDs (the {id} segment of the Firestore path).
+     * @param uid  The participant's Firebase UID.
+     * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
+     * @return The parentId (communityId) if found, null otherwise.
      */
-    suspend fun fetchJoinedIds(
-        userId: String,
+    suspend fun fetchParentId(
+        uid: String,
         type: ParticipantType = ParticipantType.PERSONAL
-    ): Result<List<String>> = runCatching {
+    ): Result<String?> = runCatching {
         firestore.collectionGroup(SUB_COLLECTION)
-            .whereEqualTo(FIELD_USER_ID, userId)
+            .whereEqualTo(FIELD_UID, uid)
             .whereEqualTo(FIELD_TYPE, type.value)
             .get()
             .await()
             .documents
-            .mapNotNull { it.reference.parent.parent?.id }
+            .firstOrNull()
+            ?.getString(FIELD_PARENT_ID)
+    }
+
+    /**
+     * Fetches all parentIds (communityIds) that a given user has joined,
+     * filtered by participant type (defaults to [ParticipantType.PERSONAL]).
+     *
+     * The parentId is resolved from the [FIELD_PARENT_ID] field stored in each
+     * document rather than from path traversal, making it safe for collection
+     * group queries regardless of nesting depth.
+     *
+     * Requires a composite Firestore index on (uid, type).
+     *
+     * @param uid  The participant's Firebase UID.
+     * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
+     * @return A list of parentIds (communityIds) the user has joined.
+     */
+    suspend fun fetchJoinedIds(
+        uid: String,
+        type: ParticipantType = ParticipantType.PERSONAL
+    ): Result<List<String>> = runCatching {
+        firestore.collectionGroup(SUB_COLLECTION)
+            .whereEqualTo(FIELD_UID, uid)
+            .whereEqualTo(FIELD_TYPE, type.value)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.getString(FIELD_PARENT_ID) }
     }
 
     /**
@@ -289,10 +293,10 @@ class ParticipantManager(
     suspend fun fetchCurrentUserJoinedList(
         type: ParticipantType = ParticipantType.PERSONAL
     ): Result<List<Participant>> = runCatching {
-        val currentUserId = auth.currentUser?.uid
+        val currentUid = auth.currentUser?.uid
             ?: error("No authenticated user is signed in.")
         firestore.collectionGroup(SUB_COLLECTION)
-            .whereEqualTo(FIELD_USER_ID, currentUserId)
+            .whereEqualTo(FIELD_UID, currentUid)
             .whereEqualTo(FIELD_TYPE, type.value)
             .get()
             .await()
@@ -302,22 +306,22 @@ class ParticipantManager(
     /**
      * Returns the total number of participants within a given parent document.
      */
-    suspend fun fetchParticipantCount(id: String): Result<Int> = runCatching {
-        participantsCollection(id).get().await().size()
+    suspend fun fetchParticipantCount(parentId: String): Result<Int> = runCatching {
+        memberCollection(parentId).get().await().size()
     }
 
     /**
      * Returns the number of participants matching a specific role within a
      * given parent document.
      *
-     * @param id   Parent document ID.
-     * @param role The role to count.
+     * @param parentId The community / group / page document ID.
+     * @param role     The role to count.
      */
     suspend fun fetchParticipantCountByRole(
-        id: String,
+        parentId: String,
         role: ParticipantRole
     ): Result<Int> = runCatching {
-        participantsCollection(id)
+        memberCollection(parentId)
             .whereEqualTo(FIELD_ROLE, role.value)
             .get()
             .await()
@@ -329,22 +333,17 @@ class ParticipantManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Applies a [ParticipantFilter] to the participants sub-collection of the
+     * Applies a [ParticipantFilter] to the member sub-collection of the
      * given parent document and returns all matching records as a plain list.
      *
-     * This is the primary entry point for ad-hoc filtering. All filter fields
-     * are optional; unset fields are simply ignored. Combining multiple fields
-     * in a single [ParticipantFilter] may require a composite Firestore index.
-     *
-     * @param id     Parent document ID.
-     * @param filter The [ParticipantFilter] describing the desired constraints.
-     * @return A list of matching [Participant] objects.
+     * @param parentId The community / group / page document ID.
+     * @param filter   The [ParticipantFilter] describing the desired constraints.
      */
     suspend fun fetchParticipantsFiltered(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter
     ): Result<List<Participant>> = runCatching {
-        filter.applyTo(participantsCollection(id))
+        filter.applyTo(memberCollection(parentId))
             .get()
             .await()
             .toObjects(Participant::class.java)
@@ -354,12 +353,12 @@ class ParticipantManager(
      * Applies a [ParticipantFilter] and returns results as cursor-paginated
      * [PagingData], suitable for large lists.
      *
-     * @param id       Parent document ID.
+     * @param parentId The community / group / page document ID.
      * @param filter   The [ParticipantFilter] describing the desired constraints.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsFilteredPaged(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter,
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Participant>> = Pager(
@@ -370,7 +369,7 @@ class ParticipantManager(
         ),
         pagingSourceFactory = {
             ParticipantPagingSource(
-                query = filter.applyTo(participantsCollection(id))
+                query = filter.applyTo(memberCollection(parentId))
                     .limit(pageSize.toLong())
             )
         }
@@ -381,23 +380,23 @@ class ParticipantManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Emits an updated list of [Participant] objects whenever the participants
+     * Emits an updated list of [Participant] objects whenever the member
      * sub-collection of the given parent document changes.
      *
-     * An optional [ParticipantFilter] can be supplied to narrow the listened
+     * An optional [ParticipantFilter] can be supplied to narrow the observed
      * query; if omitted the entire sub-collection is observed.
      *
      * The underlying Firestore [ListenerRegistration] is automatically removed
      * when the returned [Flow] is cancelled.
      *
-     * @param id     Parent document ID.
-     * @param filter Optional filter to restrict the listener query.
+     * @param parentId The community / group / page document ID.
+     * @param filter   Optional filter to restrict the listener query.
      */
     fun observeParticipants(
-        id: String,
+        parentId: String,
         filter: ParticipantFilter? = null
     ): Flow<List<Participant>> = callbackFlow {
-        val baseQuery = participantsCollection(id)
+        val baseQuery = memberCollection(parentId)
         val query     = filter?.applyTo(baseQuery) ?: baseQuery
 
         val registration: ListenerRegistration = query.addSnapshotListener { snapshot, error ->
@@ -414,12 +413,12 @@ class ParticipantManager(
      * Emits the [Participant] record for a specific user within the given parent
      * document whenever that document changes, or null if it does not exist.
      *
-     * @param id     Parent document ID.
-     * @param userId Participant's Firebase UID.
+     * @param parentId The community / group / page document ID.
+     * @param uid      The participant's Firebase UID.
      */
-    fun observeParticipant(id: String, userId: String): Flow<Participant?> = callbackFlow {
+    fun observeParticipant(parentId: String, uid: String): Flow<Participant?> = callbackFlow {
         val registration: ListenerRegistration =
-            participantDocument(id, userId).addSnapshotListener { snapshot, error ->
+            memberDocument(parentId, uid).addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     close(error)
                     return@addSnapshotListener
@@ -437,11 +436,11 @@ class ParticipantManager(
      * Returns a [Flow] of cursor-paginated [PagingData] for all participants
      * within the given parent document, ordered by join date ascending.
      *
-     * @param id       Parent document ID.
+     * @param parentId The community / group / page document ID.
      * @param pageSize Number of documents to load per page.
      */
     fun fetchParticipantsPaged(
-        id: String,
+        parentId: String,
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Participant>> = Pager(
         config = PagingConfig(
@@ -451,7 +450,7 @@ class ParticipantManager(
         ),
         pagingSourceFactory = {
             ParticipantPagingSource(
-                query = participantsCollection(id)
+                query = memberCollection(parentId)
                     .orderBy(FIELD_JOINED_AT, Query.Direction.ASCENDING)
                     .limit(pageSize.toLong())
             )
@@ -463,7 +462,7 @@ class ParticipantManager(
      * [ParticipantRole].
      */
     fun fetchParticipantsByRolePaged(
-        id: String,
+        parentId: String,
         role: ParticipantRole,
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Participant>> = Pager(
@@ -473,7 +472,7 @@ class ParticipantManager(
         ),
         pagingSourceFactory = {
             ParticipantPagingSource(
-                query = participantsCollection(id)
+                query = memberCollection(parentId)
                     .whereEqualTo(FIELD_ROLE, role.value)
                     .orderBy(FIELD_JOINED_AT, Query.Direction.ASCENDING)
                     .limit(pageSize.toLong())
@@ -486,7 +485,7 @@ class ParticipantManager(
      * [ParticipantType] (defaults to [ParticipantType.PERSONAL]).
      */
     fun fetchParticipantsByTypePaged(
-        id: String,
+        parentId: String,
         type: ParticipantType = ParticipantType.PERSONAL,
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Participant>> = Pager(
@@ -496,7 +495,7 @@ class ParticipantManager(
         ),
         pagingSourceFactory = {
             ParticipantPagingSource(
-                query = participantsCollection(id)
+                query = memberCollection(parentId)
                     .whereEqualTo(FIELD_TYPE, type.value)
                     .orderBy(FIELD_JOINED_AT, Query.Direction.ASCENDING)
                     .limit(pageSize.toLong())
@@ -519,23 +518,20 @@ class ParticipantManager(
  * Usage example:
  * ```kotlin
  * val filter = ParticipantFilter(
- *     role      = ParticipantRole.ADMIN,
- *     type      = ParticipantType.PERSONAL,
+ *     role         = ParticipantRole.ADMIN,
+ *     type         = ParticipantType.PERSONAL,
  *     joinedAfter  = Timestamp(1_700_000_000, 0),
- *     sortOrder = Query.Direction.DESCENDING
+ *     sortOrder    = Query.Direction.DESCENDING
  * )
- * manager.fetchParticipantsFiltered(id = "abc", filter = filter)
+ * manager.fetchParticipantsFiltered(parentId = "communityAbc", filter = filter)
  * ```
  *
  * @param role         Filters participants by a specific [ParticipantRole].
  * @param type         Filters participants by a specific [ParticipantType].
- *                     Defaults to [ParticipantType.PERSONAL] when explicitly set.
  * @param joinedAfter  Includes only participants who joined after this [Timestamp].
  * @param joinedBefore Includes only participants who joined before this [Timestamp].
  * @param sortOrder    Controls the sort direction on [FIELD_JOINED_AT].
- *                     Defaults to [Query.Direction.ASCENDING] when explicitly set.
  * @param limit        Caps the result set to the given number of documents.
- *                     When used with paged variants this is the per-page size.
  */
 data class ParticipantFilter(
     val role: ParticipantRole? = null,
@@ -569,18 +565,16 @@ data class ParticipantFilter(
     /**
      * Applies all non-null constraints to the given [Query] and returns the
      * resulting constrained [Query].
-     *
-     * @param query The base Firestore [Query] to build upon.
      */
     fun applyTo(query: Query): Query {
         var q = query
 
-        role?.let          { q = q.whereEqualTo(FIELD_ROLE, it.value) }
-        type?.let          { q = q.whereEqualTo(FIELD_TYPE, it.value) }
-        joinedAfter?.let   { q = q.whereGreaterThan(FIELD_JOINED_AT, it) }
-        joinedBefore?.let  { q = q.whereLessThan(FIELD_JOINED_AT, it) }
-        sortOrder?.let     { q = q.orderBy(FIELD_JOINED_AT, it) }
-        limit?.let         { q = q.limit(it) }
+        role?.let         { q = q.whereEqualTo(FIELD_ROLE, it.value) }
+        type?.let         { q = q.whereEqualTo(FIELD_TYPE, it.value) }
+        joinedAfter?.let  { q = q.whereGreaterThan(FIELD_JOINED_AT, it) }
+        joinedBefore?.let { q = q.whereLessThan(FIELD_JOINED_AT, it) }
+        sortOrder?.let    { q = q.orderBy(FIELD_JOINED_AT, it) }
+        limit?.let        { q = q.limit(it) }
 
         return q
     }
@@ -594,9 +588,8 @@ data class ParticipantFilter(
  * A Firestore-backed [PagingSource] for [Participant] documents.
  *
  * Uses cursor-based pagination via [DocumentSnapshot.startAfter] so that
- * previously loaded pages are never re-read, keeping Firestore read costs and
- * memory footprint minimal. Only forward pagination is supported; refreshes
- * always restart from the first page.
+ * previously loaded pages are never re-read. Only forward pagination is
+ * supported; refreshes always restart from the first page.
  *
  * @param query The base Firestore [Query] — must include a [Query.limit] clause.
  */
@@ -613,7 +606,7 @@ class ParticipantPagingSource(
 
         val snapshot     = pageQuery.get().await()
         val participants = snapshot.toObjects(Participant::class.java)
-        val nextKey      = snapshot.documents.lastOrNull().takeUnless { snapshot.isEmpty() }
+        val nextKey      = snapshot.documents.lastOrNull().takeUnless { snapshot.isEmpty }
 
         LoadResult.Page(
             data    = participants,
