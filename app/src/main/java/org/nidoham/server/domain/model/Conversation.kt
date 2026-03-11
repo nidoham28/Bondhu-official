@@ -1,6 +1,8 @@
 package org.nidoham.server.domain.model
 
+import android.nidoham.server.domain.ParticipantType
 import com.google.firebase.Timestamp
+import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
@@ -11,26 +13,25 @@ import com.google.firebase.firestore.ServerTimestamp
 // ─────────────────────────────────────────────────────────────────────────────
 
 data class LastMessagePreview(
-    @PropertyName("message_id")
-    @JvmField var messageId: String = "",
+    // FIX #2: replaced @JvmField + @PropertyName with @get/@set targets,
+    //         consistent with the Participant pattern and unambiguous for Firestore.
+    @get:PropertyName("message_id") @set:PropertyName("message_id")
+    var messageId: String = "",
 
-    @PropertyName("sender_id")
-    @JvmField var senderId: String = "",
+    @get:PropertyName("sender_id") @set:PropertyName("sender_id")
+    var senderId: String = "",
 
-    // Truncated to 100 chars before saving — safe for display
-    @PropertyName("content")
-    @JvmField var content: String = "",
+    @get:PropertyName("content") @set:PropertyName("content")
+    var content: String = "",
 
-    // Mirrors Message.type so the UI can show "📷 Photo" etc. without fetching
-    @PropertyName("type")
-    @JvmField var type: String = MessageType.TEXT.name.lowercase(),
+    @get:PropertyName("type") @set:PropertyName("type")
+    var type: String = MessageType.TEXT.name.lowercase(),
 
-    @PropertyName("timestamp")
-    @JvmField var timestamp: Timestamp? = null,
+    @get:PropertyName("timestamp") @set:PropertyName("timestamp")
+    var timestamp: Timestamp? = null,
 
-    // Count of participants who haven't read this message yet
-    @PropertyName("unread_count")
-    @JvmField var unreadCount: Int = 0
+    @get:PropertyName("unread_count") @set:PropertyName("unread_count")
+    var unreadCount: Int = 0
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,172 +39,59 @@ data class LastMessagePreview(
 // ─────────────────────────────────────────────────────────────────────────────
 
 data class Conversation(
-    @PropertyName("conversation_id")
-    @JvmField var conversationId: String = "",
+    @field:DocumentId
+    @get:PropertyName("conversation_id") @set:PropertyName("conversation_id")
+    var conversationId: String = "",
 
-    @PropertyName("creator_id")
-    @JvmField var creatorId: String = "",
+    @get:PropertyName("creator_id") @set:PropertyName("creator_id")
+    var creatorId: String = "",
 
-    @PropertyName("title")
-    @JvmField var title: String = "",
+    @get:PropertyName("title") @set:PropertyName("title")
+    var title: String = "",
 
-    @PropertyName("subtitle")
-    @JvmField var subtitle: String? = null,
+    @get:PropertyName("subtitle") @set:PropertyName("subtitle")
+    var subtitle: String? = null,
 
-    @PropertyName("photo_url")
-    @JvmField var photoUrl: String? = null,
+    @get:PropertyName("photo_url") @set:PropertyName("photo_url")
+    var photoUrl: String? = null,
 
-    @PropertyName("type")
-    @JvmField var type: String = ConversationType.PRIVATE.name.lowercase(),
+    @get:PropertyName("type") @set:PropertyName("type")
+    var type: String = ParticipantType.PERSONAL.value,
 
-    @PropertyName("participants")
-    @JvmField var participants: List<Participant> = emptyList(),
+    @get:PropertyName("last_message") @set:PropertyName("last_message")
+    var lastMessage: LastMessagePreview? = null,
 
-    @PropertyName("participants_ids")
-    @JvmField var participantsIds: List<String> = emptyList(),
+    @field:ServerTimestamp
+    @get:PropertyName("created_at") @set:PropertyName("created_at")
+    var createdAt: Timestamp? = null,
 
-    // Fixed: was Message? — replaced with lightweight preview to avoid
-    // 1MB document limit breaches and Message schema coupling.
-    @PropertyName("last_message")
-    @JvmField var lastMessage: LastMessagePreview? = null,
+    @get:PropertyName("updated_at") @set:PropertyName("updated_at")
+    var updatedAt: Timestamp? = null,
 
-    @PropertyName("message_pinned")
-    @JvmField var messagePinned: List<String> = emptyList(),
+    @get:PropertyName("subscriber_count") @set:PropertyName("subscriber_count")
+    var subscriberCount: Long = 0L,
 
-    // Fixed: @ServerTimestamp only on createdAt — set once on document creation.
-    @ServerTimestamp
-    @PropertyName("created_at")
-    @JvmField var createdAt: Timestamp? = null,
+    @get:PropertyName("message_count") @set:PropertyName("message_count")
+    var messageCount: Long = 0L,
 
-    // Fixed: removed @ServerTimestamp — updatedAt must be set explicitly
-    // by the repository (e.g. when a new message arrives or metadata changes).
-    @PropertyName("updated_at")
-    @JvmField var updatedAt: Timestamp? = null,
+    @get:PropertyName("translated") @set:PropertyName("translated")
+    var translated: Boolean = false,
 
-    @PropertyName("subscriber_count")
-    @JvmField var subscriberCount: Long = 0L,
+    @get:PropertyName("allow_share_message") @set:PropertyName("allow_share_message")
+    var allowShareMessage: Boolean = true,
 
-    @PropertyName("message_count")
-    @JvmField var messageCount: Long = 0L,
-
-    @PropertyName("translated")
-    @JvmField var translated: Boolean = false,
-
-    @PropertyName("allow_share_message")
-    @JvmField var allowShareMessage: Boolean = true,
-
-    @PropertyName("admin_approval")
-    @JvmField var adminApproval: Boolean = false
+    @get:PropertyName("admin_approval") @set:PropertyName("admin_approval")
+    var adminApproval: Boolean = false
 ) {
     @get:Exclude
-    val conversationType: ConversationType get() = ConversationType.fromString(type)
+    val conversationType: ParticipantType get() = ParticipantType.fromString(type)
 
     @get:Exclude
-    val isGroup: Boolean get() = conversationType == ConversationType.GROUP
+    val isGroup: Boolean get() = conversationType == ParticipantType.GROUP
 
     @get:Exclude
-    val isChannel: Boolean get() = conversationType == ConversationType.CHANNEL
+    val isChannel: Boolean get() = conversationType == ParticipantType.CHANNEL
 
     @get:Exclude
-    val isPrivate: Boolean get() = conversationType == ConversationType.PRIVATE
-
-    fun getParticipant(userId: String): Participant? =
-        participants.find { it.uid == userId }
-
-    fun isParticipant(userId: String): Boolean =
-        userId in participantsIds
-
-    fun isAdmin(userId: String): Boolean =
-        getParticipant(userId)?.toRole()
-            ?.let { it == ParticipantRole.ADMIN || it == ParticipantRole.OWNER } ?: false
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Participant
-// ─────────────────────────────────────────────────────────────────────────────
-
-data class Participant(
-    @PropertyName("uid")
-    @JvmField var uid: String = "",
-
-    @PropertyName("role")
-    @JvmField var role: String = ParticipantRole.MEMBER.name.lowercase(),
-
-    @PropertyName("joined_at")
-    @JvmField var joinedAt: Timestamp? = null,
-
-    // last_seen here is the participant's last activity inside this conversation
-    // (distinct from global online/offline presence handled by your other class).
-    @PropertyName("last_seen")
-    @JvmField var lastSeen: Timestamp? = null,
-
-    @PropertyName("last_message_count")
-    @JvmField var lastMessageCount: Long = 0L,
-
-    @PropertyName("blocked")
-    @JvmField var blocked: List<String> = emptyList(),
-
-    @PropertyName("active")
-    @JvmField var active: Boolean = true,
-
-    // Fixed: was List<String> — muted scopes to this participant in this
-    // conversation, so it's a simple Boolean flag, not a list.
-    @PropertyName("muted")
-    @JvmField var muted: Boolean = false,
-
-    @PropertyName("read_indicator")
-    @JvmField var readIndicator: Boolean = true,
-
-    @PropertyName("typing_indicator")
-    @JvmField var typingIndicator: Boolean = true,
-
-    @PropertyName("nickname")
-    @JvmField var nickname: List<Nickname> = emptyList()
-) {
-    @get:Exclude
-    val participantRole: ParticipantRole get() = ParticipantRole.fromString(role)
-
-    // Kept for backward compat with repository call sites
-    fun toRole(): ParticipantRole = participantRole
-
-    fun getNicknameFor(userId: String): String? =
-        nickname.find { it.uid == userId }?.nickname
-
-    // Unread count = total messages in conversation minus what this participant last saw
-    fun unreadCount(totalMessageCount: Long): Long =
-        (totalMessageCount - lastMessageCount).coerceAtLeast(0)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Nickname
-// ─────────────────────────────────────────────────────────────────────────────
-
-data class Nickname(
-    @PropertyName("uid")
-    @JvmField var uid: String = "",
-
-    @PropertyName("nickname")
-    @JvmField var nickname: String = ""
-)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Enums
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum class ConversationType {
-    PRIVATE, GROUP, CHANNEL;
-
-    companion object {
-        fun fromString(value: String): ConversationType =
-            entries.find { it.name.equals(value, ignoreCase = true) } ?: PRIVATE
-    }
-}
-
-enum class ParticipantRole {
-    OWNER, ADMIN, MEMBER;
-
-    companion object {
-        fun fromString(value: String): ParticipantRole =
-            entries.find { it.name.equals(value, ignoreCase = true) } ?: MEMBER
-    }
+    val isPrivate: Boolean get() = conversationType == ParticipantType.PERSONAL
 }

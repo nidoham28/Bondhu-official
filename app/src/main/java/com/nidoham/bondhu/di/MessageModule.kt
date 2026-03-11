@@ -1,5 +1,6 @@
 package com.nidoham.bondhu.di
 
+import android.nidoham.server.repository.ParticipantManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.nidoham.bondhu.data.repository.message.MessageRepository
 import dagger.Module
@@ -21,14 +22,15 @@ object MessageModule {
 
     @Provides
     @Singleton
-    fun provideConversationManager(firestore: FirebaseFirestore): ConversationManager =
-        ConversationManager(firestore)
+    fun provideConversationManager(firestore: FirebaseFirestore, participantRepository: ParticipantManager): ConversationManager =
+        ConversationManager(firestore, participantRepository)
 
     @Provides
     @Singleton
     fun provideMessageRepository(
         firestore: FirebaseFirestore,
         messageManager: MessageManager,
-        conversationManager: ConversationManager
-    ): MessageRepository = MessageRepository(firestore, messageManager, conversationManager)
+        conversationManager: ConversationManager,
+        participantRepository: ParticipantManager
+    ): MessageRepository = MessageRepository(firestore, messageManager, conversationManager, participantRepository)
 }
