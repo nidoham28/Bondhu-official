@@ -1,7 +1,6 @@
 package com.nidoham.bondhu
 
 import android.app.Application
-import android.content.Context
 import com.nidoham.server.manager.PresenceManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -17,45 +16,33 @@ import javax.inject.Inject
  *
  * Responsibilities:
  * - Bootstraps Hilt dependency injection.
- * - Initializes logging (Timber).
- * - Initializes Presence Manager (Online/Offline tracking).
- * - Provides an application-wide CoroutineScope for background tasks.
+ * - Initializes Timber logging.
+ * - Initializes [PresenceManager] for online/offline presence tracking.
+ * - Provides an application-wide [CoroutineScope] for background work.
  */
 @HiltAndroidApp
-class
-BondhuApp : Application() {
+class BondhuApp : Application() {
 
-    // Inject PresenceManager via Hilt instead of constructing it manually.
-    // Hilt injects into @HiltAndroidApp Application classes automatically before onCreate().
     @Inject
     lateinit var presenceManager: PresenceManager
 
-    // Application-wide scope using SupervisorJob so one failure doesn't cancel others.
+    /** Application-wide scope; [SupervisorJob] ensures one failure does not cancel siblings. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    lateinit var app: Application
-
-    val context: Context
-        get() = app.applicationContext
 
     override fun onCreate() {
         super.onCreate()
 
-        // 1. Force instantiation of PresenceManager to start tracking instantly.
-        // This ensures the init{} block inside PresenceManager runs safely.
+        // Initialize presence tracking immediately so the init block inside
+        // PresenceManager runs as early as possible after Hilt injection.
         presenceManager.initialize()
 
-        // 2. Initialize Timber for debugging
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
 
-        // 3. Pre-fetch or initialize ImgBB API key in the background
         appScope.launch {
             runCatching { ImgBBStorage.apiKey() }
+                .onFailure { e -> Timber.e(e, "BondhuApp: failed to initialize ImgBB API key") }
         }
-    }
-
-    companion object{
     }
 }

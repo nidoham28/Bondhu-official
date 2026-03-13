@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -85,55 +84,37 @@ private const val TAB_MESSAGES = 3
 private const val TAB_PROFILE  = 4
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Nav Item Model
+// Nav item model
 // ─────────────────────────────────────────────────────────────────────────────
 
 sealed class BottomNavItem {
     data class IconTab(
-        val selectedIcon: ImageVector,
-        val unselectedIcon: ImageVector,
-        val contentDescription: String
+        val selectedIcon       : ImageVector,
+        val unselectedIcon     : ImageVector,
+        val contentDescription : String
     ) : BottomNavItem()
 
     data class ProfileTab(
-        val fallbackSelectedIcon: ImageVector   = Icons.Filled.AccountCircle,
-        val fallbackUnselectedIcon: ImageVector = Icons.Outlined.AccountCircle,
-        val contentDescription: String          = "Profile"
+        val fallbackSelectedIcon   : ImageVector = Icons.Filled.AccountCircle,
+        val fallbackUnselectedIcon : ImageVector = Icons.Outlined.AccountCircle,
+        val contentDescription     : String      = "Profile"
     ) : BottomNavItem()
 }
 
 private val NAV_ITEMS = listOf(
-    BottomNavItem.IconTab(
-        selectedIcon       = Icons.Filled.Home,
-        unselectedIcon     = Icons.Outlined.Home,
-        contentDescription = "Home"
-    ),
-    BottomNavItem.IconTab(
-        selectedIcon       = Icons.Filled.Search,
-        unselectedIcon     = Icons.Outlined.Search,
-        contentDescription = "Search"
-    ),
-    BottomNavItem.IconTab(
-        selectedIcon       = Icons.Filled.Movie,
-        unselectedIcon     = Icons.Outlined.Movie,
-        contentDescription = "Reels"
-    ),
-    BottomNavItem.IconTab(
-        selectedIcon       = Icons.AutoMirrored.Filled.Chat,
-        unselectedIcon     = Icons.AutoMirrored.Outlined.Chat,
-        contentDescription = "Messages"
-    ),
+    BottomNavItem.IconTab(Icons.Filled.Home,                  Icons.Outlined.Home,    "Home"),
+    BottomNavItem.IconTab(Icons.Filled.Search,                Icons.Outlined.Search,  "Search"),
+    BottomNavItem.IconTab(Icons.Filled.Movie,                 Icons.Outlined.Movie,   "Reels"),
+    BottomNavItem.IconTab(Icons.AutoMirrored.Filled.Chat,     Icons.AutoMirrored.Outlined.Chat, "Messages"),
     BottomNavItem.ProfileTab()
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Screen
+// Main screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun MainScreen(
-    profileImageUrl: String? = null
-) {
+fun MainScreen(profileImageUrl: String? = null) {
     var selectedTab      by remember { mutableIntStateOf(TAB_HOME) }
     var targetProfileUid by remember { mutableStateOf<String?>(null) }
 
@@ -148,19 +129,15 @@ fun MainScreen(
                 }
             )
         },
-        containerColor = MaterialTheme.colorScheme.background,
-        // FIX: padding was
-        // declared as `_ ` (ignored). Apply it so Scaffold content
-        //      is not obscured by the bottom bar.
+        containerColor = MaterialTheme.colorScheme.background
     ) { _ ->
         AnimatedContent(
-            targetState = selectedTab,
+            targetState    = selectedTab,
             transitionSpec = {
-                fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) togetherWith
-                        fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing))
+                fadeIn(tween(200, easing = FastOutSlowInEasing)) togetherWith
+                        fadeOut(tween(200, easing = FastOutSlowInEasing))
             },
             label    = "MainScreenTransition",
-            // FIX: consume innerPadding here so content sits above the nav bar
             modifier = Modifier
                 .fillMaxSize()
         ) { tab ->
@@ -182,34 +159,28 @@ fun MainScreen(
                     profileUserId  = targetProfileUid,
                     onNavigateBack = {
                         if (targetProfileUid != null) {
-                            // FIX: targetProfileUid was assigned null then never read before
-                            //      selectedTab was changed. Clear it first, then switch tabs
-                            //      so ProfileScreen recomposition sees the reset value.
                             targetProfileUid = null
                             selectedTab      = TAB_SEARCH
                         }
                     }
                 )
-
-                else -> HomeScreen()
             }
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bottom Bar
+// Bottom bar
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun InstagramBottomBar(
-    selectedTab: Int,
-    profileImageUrl: String?,
-    onTabSelected: (Int) -> Unit
+    selectedTab     : Int,
+    profileImageUrl : String?,
+    onTabSelected   : (Int) -> Unit
 ) {
-    Box {
+    Column {
         HorizontalDivider(
-            modifier  = Modifier.align(Alignment.TopCenter),
             thickness = 0.5.dp,
             color     = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
         )
@@ -243,14 +214,14 @@ private fun InstagramBottomBar(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Icon Tab
+// Icon tab
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun NavIconTab(
-    item: BottomNavItem.IconTab,
-    isSelected: Boolean,
-    onClick: () -> Unit
+    item       : BottomNavItem.IconTab,
+    isSelected : Boolean,
+    onClick    : () -> Unit
 ) {
     val scale by animateFloatAsState(
         targetValue   = if (isSelected) 1.15f else 1f,
@@ -281,29 +252,25 @@ private fun NavIconTab(
                 contentAlignment = Alignment.Center
             ) {
                 AnimatedContent(
-                    targetState  = isSelected,
+                    targetState    = isSelected,
                     transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                    label        = "iconSwap"
+                    label          = "iconSwap"
                 ) { sel ->
                     Icon(
                         imageVector        = if (sel) item.selectedIcon else item.unselectedIcon,
                         contentDescription = item.contentDescription,
                         modifier           = Modifier.size(ICON_SIZE),
-                        tint               = if (sel)
-                            MaterialTheme.colorScheme.onBackground
-                        else
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+                        tint               = MaterialTheme.colorScheme.onBackground
+                            .copy(alpha = if (sel) 1f else 0.55f)
                     )
                 }
             }
 
             Text(
-                text   = item.contentDescription,
-                style  = MaterialTheme.typography.labelSmall,
-                color  = if (isSelected)
-                    MaterialTheme.colorScheme.onBackground
-                else
-                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                text     = item.contentDescription,
+                style    = MaterialTheme.typography.labelSmall,
+                color    = MaterialTheme.colorScheme.onBackground
+                    .copy(alpha = if (isSelected) 1f else 0.55f),
                 maxLines = 1
             )
         }
@@ -311,15 +278,15 @@ private fun NavIconTab(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Profile Tab
+// Profile tab
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun NavProfileTab(
-    item: BottomNavItem.ProfileTab,
-    imageUrl: String?,
-    isSelected: Boolean,
-    onClick: () -> Unit
+    item       : BottomNavItem.ProfileTab,
+    imageUrl   : String?,
+    isSelected : Boolean,
+    onClick    : () -> Unit
 ) {
     val ringWidth by animateDpAsState(
         targetValue   = if (isSelected) 2.dp else 0.dp,
@@ -329,7 +296,6 @@ private fun NavProfileTab(
         ),
         label = "profileRingWidth"
     )
-
     val ringColor = MaterialTheme.colorScheme.onBackground
 
     Box(
@@ -354,10 +320,9 @@ private fun NavProfileTab(
                         .drawBehind {
                             val strokePx = ringWidth.toPx()
                             if (strokePx > 0f) {
-                                val ringRadius = size.minDimension / 2f + strokePx / 2f + 2.dp.toPx()
                                 drawCircle(
                                     color  = ringColor,
-                                    radius = ringRadius,
+                                    radius = size.minDimension / 2f + strokePx / 2f + 2.dp.toPx(),
                                     style  = Stroke(width = strokePx)
                                 )
                             }
@@ -374,29 +339,25 @@ private fun NavProfileTab(
                 }
             } else {
                 AnimatedContent(
-                    targetState  = isSelected,
+                    targetState    = isSelected,
                     transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                    label        = "profileIconSwap"
+                    label          = "profileIconSwap"
                 ) { sel ->
                     Icon(
                         imageVector        = if (sel) item.fallbackSelectedIcon else item.fallbackUnselectedIcon,
                         contentDescription = item.contentDescription,
                         modifier           = Modifier.size(ICON_SIZE),
-                        tint               = if (sel)
-                            MaterialTheme.colorScheme.onBackground
-                        else
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+                        tint               = MaterialTheme.colorScheme.onBackground
+                            .copy(alpha = if (sel) 1f else 0.55f)
                     )
                 }
             }
 
             Text(
-                text   = item.contentDescription,
-                style  = MaterialTheme.typography.labelSmall,
-                color  = if (isSelected)
-                    MaterialTheme.colorScheme.onBackground
-                else
-                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                text     = item.contentDescription,
+                style    = MaterialTheme.typography.labelSmall,
+                color    = MaterialTheme.colorScheme.onBackground
+                    .copy(alpha = if (isSelected) 1f else 0.55f),
                 maxLines = 1
             )
         }

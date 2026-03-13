@@ -43,7 +43,6 @@ import com.nidoham.server.util.AuthProvider
 data class User(
 
     // ─── Identity ─────────────────────────────────────────────────────────────
-    @DocumentId
     var uid: String = "",
     var username: String = "",
     var displayName: String = "",

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="splash_background_light">#F0F5FF</color>
-    <color name="splash_background_dark">#0F1B30</color>
+    <!-- Matches AppColors.Ice50 — prevents a background flash on launch -->
+    <color name="splash_background">#F0F6FF</color>
 </resources>

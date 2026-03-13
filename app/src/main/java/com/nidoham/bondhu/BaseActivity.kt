@@ -2,9 +2,9 @@ package com.nidoham.bondhu
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
 import android.os.LocaleList
 import androidx.activity.ComponentActivity
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -13,11 +13,11 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * সমস্ত Activity এর জন্য বেস ক্লাস।
+ * Base class for all Activities.
  *
- * বৈশিষ্ট্য:
- * - ভাষা পরিবর্তন সাপোর্ট (পারসিস্টেন্ট)
- * - Lifecycle-aware Flow কালেকশন
+ * Provides:
+ * - Persistent per-user language selection applied via [attachBaseContext].
+ * - Lifecycle-aware [Flow] collection via [collectFlow].
  */
 abstract class BaseActivity : ComponentActivity() {
 
@@ -26,18 +26,18 @@ abstract class BaseActivity : ComponentActivity() {
     }
 
     /**
-     * Flow কালেক্ট করুন lifecycle-aware ভাবে।
-     * UI State এবং Event দুটোর জন্যই ব্যবহার করুন।
+     * Collects [flow] in a lifecycle-aware manner, suspending collection when
+     * the lifecycle drops below [Lifecycle.State.STARTED] and resuming when
+     * it returns. Safe for both UI state and one-shot events.
      *
-     * @param flow কালেক্ট করার Flow
-     * @param action প্রতিটি ইমিশনে কী করবে
+     * @param flow   The [Flow] to collect.
+     * @param action Invoked for each emission.
      */
     protected fun <T> collectFlow(
         flow: Flow<T>,
         action: suspend (T) -> Unit
     ) {
         lifecycleScope.launch {
-            // STARTED state এ শুধুমাত্র কালেক্ট করবে, অটোমেটিক্যালি pause হলে বন্ধ হবে
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 flow.collect(action)
             }
@@ -45,60 +45,48 @@ abstract class BaseActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val PREFS_NAME = "app_prefs"
-        private const val KEY_LANGUAGE = "app_language"
+        private const val PREFS_NAME        = "app_prefs"
+        private const val KEY_LANGUAGE      = "app_language"
         private const val KEY_SYSTEM_DEFAULT = "system_default"
 
         /**
-         * অ্যাপের ভাষা আপডেট করুন।
-         * null দিলে সিস্টেম ডিফল্ট ব্যবহার হবে।
+         * Persists [languageCode] and recreates the Activity so the change takes
+         * effect immediately. Pass null to revert to the system default locale.
          */
         fun ComponentActivity.updateLanguage(languageCode: String?) {
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .edit()
-                .apply {
-                    if (languageCode == null) {
-                        putBoolean(KEY_SYSTEM_DEFAULT, true)
-                        remove(KEY_LANGUAGE)
-                    } else {
-                        putBoolean(KEY_SYSTEM_DEFAULT, false)
-                        putString(KEY_LANGUAGE, languageCode)
-                    }
-                    apply()
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+                if (languageCode == null) {
+                    putBoolean(KEY_SYSTEM_DEFAULT, true)
+                    remove(KEY_LANGUAGE)
+                } else {
+                    putBoolean(KEY_SYSTEM_DEFAULT, false)
+                    putString(KEY_LANGUAGE, languageCode)
                 }
+            }
             recreate()
         }
 
         /**
-         * Context এ সেভ করা ভাষা অ্যাপ্লাই করুন।
+         * Returns a [Context] configured with the persisted app language, or the
+         * receiver unchanged if the system default is active or no language has
+         * been saved.
          */
         private fun Context.applyAppLanguage(): Context {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-
-            // যদি সিস্টেম ডিফল্ট সেট করা থাকে, কনটেক্সট আনচেঞ্জড রিটার্ন করবে
-            if (prefs.getBoolean(KEY_SYSTEM_DEFAULT, true)) {
-                return this
-            }
+            if (prefs.getBoolean(KEY_SYSTEM_DEFAULT, true)) return this
 
             val languageCode = prefs.getString(KEY_LANGUAGE, null) ?: return this
 
             return try {
-                val locale = Locale(languageCode)
+                val locale     = Locale(languageCode)
+                val localeList = LocaleList(locale)
                 Locale.setDefault(locale)
+                LocaleList.setDefault(localeList)
 
                 val config = Configuration(resources.configuration)
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val localeList = LocaleList(locale)
-                    LocaleList.setDefault(localeList)
-                    config.setLocales(localeList)
-                } else {
-                    config.setLocale(locale)
-                }
-
+                config.setLocales(localeList)
                 createConfigurationContext(config)
             } catch (e: Exception) {
-                // কোনো এরর হলে ডিফল্ট কনটেক্সট রিটার্ন
                 this
             }
         }

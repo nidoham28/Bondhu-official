@@ -2,48 +2,28 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ══════════════════════════════════════════════════════════
-         PERMISSIONS
-         ══════════════════════════════════════════════════════════ -->
-
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!--
-        POST_NOTIFICATIONS — required on Android 13+ (API 33+) to display
-        FCM push notifications. Must also be requested at runtime via
-        ActivityCompat.requestPermissions().
-    -->
+    <!-- Push notifications — runtime request required on API 33+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Media read — API 33+ granular permission -->
+    <!-- Media access — granular permission on API 33+, legacy below -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-
-    <!-- Media read — API 32 and below -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-
-    <!-- External storage write — API 28 and below only -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- Camera — for photo capture -->
+    <!-- Camera — android:required="false" allows installation on devices without one -->
     <uses-permission android:name="android.permission.CAMERA" />
-
-    <!--
-        Camera hardware feature — android:required="false" means the app
-        installs on devices without a camera; gate camera UI in code.
-    -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
 
-    <!-- ══════════════════════════════════════════════════════════
-         APPLICATION
-         ══════════════════════════════════════════════════════════ -->
     <application
         android:name=".BondhuApp"
         android:allowBackup="true"
@@ -60,9 +40,7 @@
         android:usesCleartextTraffic="false"
         tools:targetApi="33">
 
-        <!-- ─────────────────────────────────────────────────────
-             ENTRY POINT — Splash
-             ───────────────────────────────────────────────────── -->
+        <!-- Splash — launcher entry point -->
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -73,9 +51,7 @@
             </intent-filter>
         </activity>
 
-        <!-- ─────────────────────────────────────────────────────
-             AUTH FLOW
-             ───────────────────────────────────────────────────── -->
+        <!-- Authentication flow -->
         <activity
             android:name=".LoginActivity"
             android:exported="false"
@@ -96,33 +72,20 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ─────────────────────────────────────────────────────
-             MAIN SHELL
-             singleTask prevents duplicate instances when the app
-             is re-launched from the recents stack or a deep-link.
-             ───────────────────────────────────────────────────── -->
+        <!-- Main shell — singleTask prevents duplicate instances on re-launch or deep-link -->
         <activity
             android:name=".MainActivity"
             android:exported="false"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ─────────────────────────────────────────────────────
-             CHAT
-             adjustResize keeps the message list visible above the
-             soft keyboard; pair with WindowCompat edge-to-edge +
-             imePadding() in Compose for smooth keyboard handling.
-             ───────────────────────────────────────────────────── -->
+        <!-- Chat — adjustResize keeps the message list above the soft keyboard -->
         <activity
             android:name=".ChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ─────────────────────────────────────────────────────
-             FILE PROVIDER
-             Enables sharing of app-private files (camera captures,
-             compressed images) via content:// URIs.
-             ───────────────────────────────────────────────────── -->
+        <!-- FileProvider — exposes app-private files via content:// URIs for camera and image sharing -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileProvider"

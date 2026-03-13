@@ -22,165 +22,176 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
 /**
- * ফন্ট স্কেল অপশন।
+ * Font scale options. Additional values can be added here and the
+ * [Typography.scale] extension will apply them automatically.
  */
 enum class FontScale(val multiplier: Float) {
     NORMAL(1.0f)
 }
 
 /**
- * অ্যাপ সেটিংস ডেটা ক্লাস।
+ * Aggregates all user-configurable theme preferences.
+ *
+ * @property isDarkMode    Explicit dark/light override; null defers to the system setting.
+ * @property dynamicColor  Whether to use Material You dynamic color on API 31+.
+ * @property fontScale     Global typography scale multiplier.
  */
 data class AppSettings(
     val isDarkMode: Boolean? = null,
     val dynamicColor: Boolean = true,
     val fontScale: FontScale = FontScale.NORMAL
 ) {
-    fun resolveIsDark(systemIsDark: Boolean): Boolean {
-        return isDarkMode ?: systemIsDark
-    }
+    fun resolveIsDark(systemIsDark: Boolean): Boolean = isDarkMode ?: systemIsDark
 }
 
-/**
- * অ্যাপের শেপ সিস্টেম।
- */
+/** Shape tokens for the Bondhu design system. */
 val AppShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
+    small      = RoundedCornerShape(8.dp),
+    medium     = RoundedCornerShape(12.dp),
+    large      = RoundedCornerShape(16.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
 
-/**
- * সেটিংস এক্সেসের জন্য CompositionLocal।
- */
+/** Provides [AppSettings] to the composition tree. */
 val LocalAppSettings = staticCompositionLocalOf { AppSettings() }
 
-/**
- * কাস্টম কালার এক্সটেনশনের জন্য CompositionLocal।
- */
+/** Provides [CustomColorPalette] — semantic colors beyond the Material 3 baseline. */
 val LocalCustomColors = staticCompositionLocalOf { CustomColorPalette() }
 
 /**
- * কাস্টম কালার প্যালেট।
+ * Semantic color extensions not covered by [MaterialTheme.colorScheme].
+ * Any field left as [Color.Unspecified] will be overridden by the theme defaults
+ * computed inside [AppTheme].
  */
 data class CustomColorPalette(
-    val success: Color = Color.Unspecified,
-    val onSuccess: Color = Color.Unspecified,
-    val warning: Color = Color.Unspecified,
-    val onWarning: Color = Color.Unspecified,
-    val info: Color = Color.Unspecified,
-    val onInfo: Color = Color.Unspecified
+    val success   : Color = Color.Unspecified,
+    val onSuccess : Color = Color.Unspecified,
+    val warning   : Color = Color.Unspecified,
+    val onWarning : Color = Color.Unspecified,
+    val info      : Color = Color.Unspecified,
+    val onInfo    : Color = Color.Unspecified
 )
 
 /**
- * রুট থিম কম্পোজেবল।
+ * Root theme composable for the Bondhu app.
+ *
+ * Resolves the active [ColorScheme] in priority order:
+ * 1. Material You dynamic color (API 31+), with dark-mode background/surface
+ *    anchored to [AppColors] tokens so the palette stays on-brand.
+ * 2. Static [DarkColorScheme] or [LightColorScheme].
+ *
+ * System bar appearance is synchronized with [isDark] via a [SideEffect] so
+ * icon tints remain legible against the active background.
+ *
+ * @param settings      User theme preferences; defaults to system dark mode + dynamic color.
+ * @param systemIsDark  System dark-mode state, injected for testability.
+ * @param customColors  Caller-provided overrides for [CustomColorPalette] fields.
+ * @param content       The composition subtree to theme.
  */
 @Composable
 fun AppTheme(
-    settings: AppSettings = AppSettings(),
-    systemIsDark: Boolean = isSystemInDarkTheme(),
-    customColors: CustomColorPalette = CustomColorPalette(),
-    content: @Composable () -> Unit
+    settings     : AppSettings = AppSettings(),
+    systemIsDark : Boolean = isSystemInDarkTheme(),
+    customColors : CustomColorPalette = CustomColorPalette(),
+    content      : @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val view = LocalView.current
-    val isDark = settings.resolveIsDark(systemIsDark)
+    val view    = LocalView.current
+    val isDark  = settings.resolveIsDark(systemIsDark)
 
     val colorScheme: ColorScheme = when {
         settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val dynamicScheme = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-            if (isDark) dynamicScheme.copy(
-                background = Color(0xFF1D2535),
-                surface = Color(0xFF252D3D),
-                surfaceVariant = Color(0xFF2D3545)
-            ) else dynamicScheme
+            if (isDark) {
+                dynamicDarkColorScheme(context).copy(
+                    background     = AppColors.DarkBg,
+                    surface        = AppColors.DarkSurface,
+                    surfaceVariant = AppColors.DarkSurfaceVariant
+                )
+            } else {
+                dynamicLightColorScheme(context)
+            }
         }
         isDark -> DarkColorScheme
-        else -> LightColorScheme
+        else   -> LightColorScheme
     }
 
-    val typography = if (settings.fontScale == FontScale.NORMAL) {
-        AppTypography
-    } else {
-        AppTypography.scale(settings.fontScale.multiplier)
-    }
+    val typography = AppTypography.scale(settings.fontScale.multiplier)
 
-    val customPalette = CustomColorPalette(
-        success = if (isDark) Color(0xFF00F5A0) else Color(0xFF00D68F),
-        onSuccess = if (isDark) Color(0xFF1D2535) else Color.White,
-        warning = if (isDark) Color(0xFFFFD54F) else Color(0xFFFFBD00),
-        onWarning = if (isDark) Color(0xFF1D2535) else Color.White,
-        info = if (isDark) Color(0xFF48CAE4) else Color(0xFF00B4D8),
-        onInfo = if (isDark) Color(0xFF1D2535) else Color.White
+    val resolvedCustomColors = CustomColorPalette(
+        success   = if (isDark) Color(0xFF00F5A0) else Color(0xFF00D68F),
+        onSuccess = if (isDark) AppColors.DarkBg  else Color.White,
+        warning   = if (isDark) Color(0xFFFFD54F) else Color(0xFFFFBD00),
+        onWarning = if (isDark) AppColors.DarkBg  else Color.White,
+        info      = if (isDark) AppColors.Cyan300  else AppColors.Cyan500,
+        onInfo    = if (isDark) AppColors.DarkBg  else Color.White
     ).merge(customColors)
 
     if (!view.isInEditMode) {
         SideEffect {
             val window = (context as? Activity)?.window ?: return@SideEffect
             WindowCompat.setDecorFitsSystemWindows(window, false)
-
             WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !isDark
+                isAppearanceLightStatusBars     = !isDark
                 isAppearanceLightNavigationBars = !isDark
             }
         }
     }
 
     CompositionLocalProvider(
-        LocalAppSettings provides settings,
-        LocalCustomColors provides customPalette
+        LocalAppSettings  provides settings,
+        LocalCustomColors provides resolvedCustomColors
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = typography,
-            shapes = AppShapes,
-            content = content
+            typography  = typography,
+            shapes      = AppShapes,
+            content     = content
         )
     }
 }
 
 /**
- * টাইপোগ্রাফি স্কেলিং এক্সটেনশন।
+ * Returns a [Typography] with every text style scaled uniformly by [factor].
+ * Returns the receiver unchanged when [factor] is exactly 1.0 to avoid
+ * unnecessary allocations on every recomposition.
  */
 private fun Typography.scale(factor: Float): Typography {
     if (factor == 1f) return this
 
     fun TextStyle.scaled() = copy(
-        fontSize = fontSize * factor,
+        fontSize   = fontSize * factor,
         lineHeight = lineHeight * factor
     )
 
     return copy(
-        displayLarge = displayLarge.scaled(),
+        displayLarge  = displayLarge.scaled(),
         displayMedium = displayMedium.scaled(),
-        displaySmall = displaySmall.scaled(),
-        headlineLarge = headlineLarge.scaled(),
+        displaySmall  = displaySmall.scaled(),
+        headlineLarge  = headlineLarge.scaled(),
         headlineMedium = headlineMedium.scaled(),
-        headlineSmall = headlineSmall.scaled(),
-        titleLarge = titleLarge.scaled(),
+        headlineSmall  = headlineSmall.scaled(),
+        titleLarge  = titleLarge.scaled(),
         titleMedium = titleMedium.scaled(),
-        titleSmall = titleSmall.scaled(),
-        bodyLarge = bodyLarge.scaled(),
-        bodyMedium = bodyMedium.scaled(),
-        bodySmall = bodySmall.scaled(),
-        labelLarge = labelLarge.scaled(),
+        titleSmall  = titleSmall.scaled(),
+        bodyLarge   = bodyLarge.scaled(),
+        bodyMedium  = bodyMedium.scaled(),
+        bodySmall   = bodySmall.scaled(),
+        labelLarge  = labelLarge.scaled(),
         labelMedium = labelMedium.scaled(),
-        labelSmall = labelSmall.scaled()
+        labelSmall  = labelSmall.scaled()
     )
 }
 
 /**
- * CustomColorPalette merge extension।
+ * Merges [other] into this palette, replacing any field that [other] has
+ * explicitly set (i.e. not [Color.Unspecified]).
  */
-private fun CustomColorPalette.merge(other: CustomColorPalette): CustomColorPalette {
-    return CustomColorPalette(
-        success = if (other.success != Color.Unspecified) other.success else success,
-        onSuccess = if (other.onSuccess != Color.Unspecified) other.onSuccess else onSuccess,
-        warning = if (other.warning != Color.Unspecified) other.warning else warning,
-        onWarning = if (other.onWarning != Color.Unspecified) other.onWarning else onWarning,
-        info = if (other.info != Color.Unspecified) other.info else info,
-        onInfo = if (other.onInfo != Color.Unspecified) other.onInfo else onInfo
-    )
-}
+private fun CustomColorPalette.merge(other: CustomColorPalette) = CustomColorPalette(
+    success   = if (other.success   != Color.Unspecified) other.success   else success,
+    onSuccess = if (other.onSuccess != Color.Unspecified) other.onSuccess else onSuccess,
+    warning   = if (other.warning   != Color.Unspecified) other.warning   else warning,
+    onWarning = if (other.onWarning != Color.Unspecified) other.onWarning else onWarning,
+    info      = if (other.info      != Color.Unspecified) other.info      else info,
+    onInfo    = if (other.onInfo    != Color.Unspecified) other.onInfo    else onInfo
+)

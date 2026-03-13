@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base application theme for v31+ -->
-    <style name="Theme.Bondhu" parent="android:Theme.Material.Light.NoActionBar" />
-
-    <!-- On API 31+, the splash screen icon is handled by the system. -->
-    <style name="Theme.Bondhu.Splash" parent="@style/Theme.Bondhu">
-        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
+    <!--
+        On API 31+, the system renders the splash screen using these attributes.
+        windowSplashScreenBackground must match the app background to prevent
+        a visible color flash during the handoff from the splash to the main theme.
+        windowSplashScreenAnimatedIcon is the adaptive icon shown at launch.
+    -->
+    <style name="Theme.Bondhu.Splash" parent="Theme.Bondhu">
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher</item>
     </style>
 </resources>
