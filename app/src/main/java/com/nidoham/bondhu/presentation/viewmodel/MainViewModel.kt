@@ -34,7 +34,6 @@ class MainViewModel @Inject constructor(
     }
 
     private fun loadCurrentUser() {
-        // FIX: getCurrentUserId() did not exist on UserRepository.
         val uid = firebaseAuth.currentUser?.uid
         if (uid == null) {
             Timber.w("MainViewModel: no authenticated user")
@@ -42,10 +41,10 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            // FIX: observeCurrentUser() did not exist on UserRepository.
-            //      UserRepository exposes no live profile stream; fetchCurrentUser()
-            //      is the correct one-shot API for loading the authenticated user's profile.
-            val user = userRepository.fetchCurrentUser(uid)
+            val user = userRepository.fetchUser(uid)
+                .onFailure { e -> Timber.e(e, "MainViewModel: failed to load profile") }
+                .getOrNull()
+
             _currentUser.value = user
             _profileImageUrl.value = user?.photoUrl
             Timber.d("MainViewModel: profile loaded — photoUrl=${user?.photoUrl}")

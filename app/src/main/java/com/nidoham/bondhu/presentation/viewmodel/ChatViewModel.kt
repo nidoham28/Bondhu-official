@@ -148,7 +148,12 @@ class ChatViewModel @Inject constructor(
     // ─────────────────────────────────────────────────────────────────────────
 
     private suspend fun loadPeerProfile(peerId: String) {
-        val user = userRepository.fetchUserById(peerId) ?: return
+        val user = userRepository.fetchUser(peerId)
+            .getOrElse { e ->
+                Timber.w(e, "ChatViewModel: failed to load peer profile for $peerId")
+                return
+            } ?: return
+
         _uiState.update { state ->
             state.copy(
                 peerName      = user.displayName.takeIf { it.isNotBlank() }

@@ -2,8 +2,7 @@ package com.nidoham.server.di
 
 import android.content.Context
 import com.google.firebase.firestore.FirebaseFirestore
-import com.nidoham.server.manager.FollowerManager
-import com.nidoham.server.manager.FollowingManager
+import com.nidoham.server.manager.FriendshipManager
 import com.nidoham.server.manager.PresenceManager
 import com.nidoham.server.manager.UserManager
 import com.nidoham.server.repository.participant.UserRepository
@@ -19,29 +18,18 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object UserModule {
 
-    // FIX: UserManager takes (FirebaseFirestore, pageSize: Int), not FirebaseAuth.
     @Provides
     @Singleton
     fun provideUserManager(
         firestore: FirebaseFirestore
-    ): UserManager = UserManager(firestore, pageSize = 20)
+    ): UserManager = UserManager(firestore)
 
-    // FIX: FollowerManager takes (FirebaseFirestore, pageSize: Int) — confirmed
-    //      by its direct construction in FriendshipRepository.
     @Provides
     @Singleton
-    fun provideFollowerManager(
+    fun provideFriendshipManager(
         firestore: FirebaseFirestore
-    ): FollowerManager = FollowerManager(firestore, pageSize = 20)
+    ): FriendshipManager = FriendshipManager(firestore)
 
-    // FIX: FollowingManager takes (FirebaseFirestore, pageSize: Int) — same pattern.
-    @Provides
-    @Singleton
-    fun provideFollowingManager(
-        firestore: FirebaseFirestore
-    ): FollowingManager = FollowingManager(firestore, pageSize = 20)
-
-    // FIX: PresenceManager takes Context, not FirebaseDatabase.
     @Provides
     @Singleton
     fun providePresenceManager(
@@ -52,13 +40,7 @@ object UserModule {
     @Singleton
     fun provideUserRepository(
         userManager: UserManager,
-        followerManager: FollowerManager,
-        followingManager: FollowingManager,
+        friendshipManager: FriendshipManager,
         presenceManager: PresenceManager
-    ): UserRepository = UserRepository(
-        userManager,
-        followerManager,
-        followingManager,
-        presenceManager
-    )
+    ): UserRepository = UserRepository(userManager, friendshipManager, presenceManager)
 }

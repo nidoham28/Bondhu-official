@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import com.nidoham.server.domain.participant.User
 import com.nidoham.server.repository.participant.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,18 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 
+/**
+ * ViewModel for the user search screen.
+ *
+ * Exposes [searchResults] as a reactive, paginated stream derived from
+ * [searchQuery]. Input is debounced and deduplicated to avoid redundant
+ * network calls on rapid keystrokes. A blank query emits an empty page
+ * immediately without touching the network.
+ *
+ * [cachedIn] ensures the current page survives configuration changes
+ * without re-triggering the underlying query.
+ */
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val userRepository: UserRepository
@@ -25,25 +39,12 @@ class SearchViewModel @Inject constructor(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // FIX: repository.searchPeople() did not exist on UserRepository, and the
-    //      manual Pager + SearchPagingSource construction was redundant —
-    //      UserRepository already exposes searchByUsername() and
-    //      searchByDisplayName(), both returning Flow<PagingData<User>> backed
-    //      by their own internal Pager. The custom PagingSource and all
-    //      DocumentSnapshot cursor logic have been removed accordingly.
-    //
-    //      Both search streams are merged so that a query matches against either
-    //      username or display name, with duplicates removed by uid.
-    @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
-    val searchResults = _searchQuery
+    val searchResults: Flow<PagingData<User>> = _searchQuery
         .debounce(300)
         .distinctUntilChanged()
         .flatMapLatest { query ->
-            if (query.isBlank()) {
-                flowOf(PagingData.empty())
-            } else {
-                userRepository.searchByUsername(query)
-            }
+            if (query.isBlank()) flowOf(PagingData.empty())
+            else userRepository.searchUsers(query)
         }
         .cachedIn(viewModelScope)
 

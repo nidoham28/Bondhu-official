@@ -1,7 +1,6 @@
 package com.nidoham.bondhu.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.nidoham.server.domain.message.Conversation
 import com.nidoham.server.domain.participant.User
@@ -10,12 +9,20 @@ import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
 import com.nidoham.server.util.ParticipantType
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
-// UI model — pairs a Conversation with its resolved peer User (null while loading).
+/**
+ * Pairs a [Conversation] with its resolved peer [User], which may be null while
+ * the profile fetch is in flight or if the peer document does not exist.
+ */
 data class ConversationWithUser(
     val conversation: Conversation,
     val peerUser: User? = null
@@ -28,63 +35,95 @@ class MessageViewModel @Inject constructor(
     private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
+    /**
+     * Always reads the live Firebase Auth state rather than capturing the UID
+     * at construction time, which would yield an empty string if the ViewModel
+     * is created before auth resolves.
+     */
     val currentUserId: String
         get() = firebaseAuth.currentUser?.uid ?: ""
 
     /**
-     * Live stream of the current user's conversations, each enriched with the
-     * resolved peer-user profile.
+     * Session-scoped cache of peer UID → [User] profile. Avoids redundant
+     * Firestore reads when the conversation list emits due to unrelated changes
+     * (e.g. a lastMessage update) while the peer roster is unchanged.
      *
-     * FIX: fetchConversationsPaged() was used previously but queries all
-     *      conversations globally, ignoring participant membership. Replaced
-     *      with observeCurrentUserConversations(), which filters to only the
-     *      conversations the authenticated user has joined via a collection
-     *      group query on the participant sub-collection.
+     * [ConcurrentHashMap] is used because [async] blocks inside [coroutineScope]
+     * may access the map concurrently from separate coroutines.
+     */
+    private val peerUserCache = ConcurrentHashMap<String, User?>()
+
+    /**
+     * Live stream of the current user's personal conversations, each enriched
+     * with the resolved peer [User] profile.
      *
-     * FIX: fetchParticipantsFiltered(id = ...) was a compile error — the
-     *      parameter was renamed to parentId in the repository.
+     * Peer resolution and user fetches are parallelised across all conversations
+     * in each emission via [coroutineScope] and [async], so list rendering is
+     * not gated on sequential round-trips. Peer profiles are cached for the
+     * ViewModel's lifetime; only newly seen UIDs trigger a network fetch.
      *
-     * FIX: runCatching { userRepository.fetchUserById(it) }.getOrNull()
-     *      double-wrapped the Result, yielding Result<User?> instead of User?.
-     *      Replaced with a direct .getOrNull() call on the returned Result.
-     *
-     * FIX: ParticipantFilter() passed no type constraint. A PERSONAL type
-     *      filter is applied to match the conversation context correctly.
-     *
-     * A transient failure on any single peer-user fetch yields null for that
-     * item rather than collapsing the entire list.
+     * A failure on any individual peer-user fetch yields a null [peerUser] for
+     * that item rather than collapsing the entire list. A terminal stream error
+     * is logged and an empty list is emitted so the UI degrades gracefully.
      */
     val conversations: Flow<List<ConversationWithUser>> =
-        firebaseAuth.currentUser?.uid
-            ?.let { uid ->
-                // fixed: observeCurrentUserConversations() scopes to the current
-                //        user's participant membership rather than all conversations.
-                messageRepository.observeCurrentUserConversations(ParticipantType.PERSONAL)
-                    .map { list: List<Conversation> ->
-                        list.map { conversation: Conversation ->
-                            val peerId = runCatching {
-                                messageRepository.fetchParticipantsFiltered(
-                                    parentId = conversation.parentId,           // fixed: was id =
-                                    filter   = ParticipantFilter(
-                                        type = ParticipantType.PERSONAL   // fixed: no type was set
-                                    )
-                                ).getOrNull()
-                                    ?.firstOrNull { it.uid != uid }
-                                    ?.uid
-                            }.getOrNull()
-
-                            // fixed: removed outer runCatching wrapper — fetchUserById already
-                            //        returns Result<User?>, so .getOrNull() is sufficient.
-                            val peerUser: User? = peerId?.let {
-                                userRepository.fetchUserById(it)
-                            }
-
-                            ConversationWithUser(
-                                conversation = conversation,
-                                peerUser     = peerUser
-                            )
-                        }
-                    }
+        messageRepository
+            .observeCurrentUserConversations(ParticipantType.PERSONAL)
+            .map { list -> resolveConversationsWithPeers(list) }
+            .catch { e ->
+                Timber.e(e, "MessageViewModel: conversation stream error")
+                emit(emptyList())
             }
-            ?: emptyFlow()
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private suspend fun resolveConversationsWithPeers(
+        list: List<Conversation>
+    ): List<ConversationWithUser> {
+        val uid = currentUserId.takeIf { it.isNotBlank() }
+            ?: return emptyList()
+
+        return coroutineScope {
+            list.map { conversation ->
+                async {
+                    ConversationWithUser(
+                        conversation = conversation,
+                        peerUser     = resolvePeerUser(conversation.parentId, uid)
+                    )
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
+     * Resolves the peer [User] for a given conversation. Returns the cached
+     * value immediately if the peer UID has been seen before; otherwise fetches
+     * the participant list to identify the peer, then fetches and caches the
+     * profile. A failure at any step returns null without propagating.
+     *
+     * @param parentId   The conversation document ID.
+     * @param currentUid The authenticated user's UID, used to exclude self from
+     *                   the participant list.
+     */
+    private suspend fun resolvePeerUser(parentId: String, currentUid: String): User? {
+        val peerId = messageRepository
+            .fetchParticipantsFiltered(
+                parentId = parentId,
+                filter   = ParticipantFilter(type = ParticipantType.PERSONAL)
+            )
+            .getOrNull()
+            ?.firstOrNull { it.uid != currentUid }
+            ?.uid
+            ?: return null
+
+        return peerUserCache.getOrPut(peerId) {
+            userRepository.fetchUser(peerId)
+                .onFailure { e ->
+                    Timber.w(e, "MessageViewModel: failed to fetch peer user $peerId")
+                }
+                .getOrNull()
+        }
+    }
 }

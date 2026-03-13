@@ -54,7 +54,7 @@ class ProfileViewModel @Inject constructor(
     fun updateLastActive() {
         val uid = firebaseAuth.currentUser?.uid ?: return
         viewModelScope.launch {
-            userRepository.updateProfile(uid, mapOf("lastActiveAt" to System.currentTimeMillis()))
+            userRepository.updateUser(uid, mapOf("lastActiveAt" to System.currentTimeMillis()))
         }
     }
 
@@ -69,28 +69,25 @@ class ProfileViewModel @Inject constructor(
             _uiState.update { it.copy(isFollowLoading = true) }
 
             runCatching {
-                if (wasFollowing) userRepository.unfollowUser(currentId, targetId)
-                else              userRepository.followUser(currentId, targetId)
-            }.fold(
-                onSuccess = {
-                    val nowFollowing = !wasFollowing
-                    _uiState.update { state ->
-                        state.copy(
-                            isFollowing     = nowFollowing,
-                            isFollowLoading = false,
-                            followersCount  = maxOf(0, state.followersCount + if (nowFollowing) 1 else -1)
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    _uiState.update {
-                        it.copy(
-                            isFollowLoading = false,
-                            error           = error.message ?: "Failed to update follow status."
-                        )
-                    }
+                if (wasFollowing) userRepository.unfollowUser(currentId, targetId).getOrThrow()
+                else              userRepository.followUser(currentId, targetId).getOrThrow()
+            }.onSuccess {
+                val nowFollowing = !wasFollowing
+                _uiState.update { state ->
+                    state.copy(
+                        isFollowing     = nowFollowing,
+                        isFollowLoading = false,
+                        followersCount  = maxOf(0, state.followersCount + if (nowFollowing) 1 else -1)
+                    )
                 }
-            )
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isFollowLoading = false,
+                        error           = error.message ?: "Failed to update follow status."
+                    )
+                }
+            }
         }
     }
 
@@ -98,16 +95,11 @@ class ProfileViewModel @Inject constructor(
      * Finds or creates a personal conversation between the signed-in user and
      * [targetUserId], then delivers the conversation ID via [onConversationReady].
      *
-     * The lookup delegates to [MessageRepository.fetchSharedParentId], which
-     * queries the participant sub-collection for the first parentId where both
-     * users hold a [ParticipantType.PERSONAL] record. This replaces the previous
-     * two-sided [fetchJoinedIds] intersection, reducing the operation to a single
-     * collection group query followed by at most one document read per candidate.
-     *
-     * If no shared conversation exists, a new one is created and both participant
-     * records are written atomically before the ID is returned, ensuring that
-     * subsequent calls to [fetchSharedParentId] will always locate the existing
-     * conversation rather than creating a duplicate.
+     * Delegates shared-parentId resolution to [MessageRepository.fetchSharedParentId],
+     * which queries the participant sub-collection for the first parentId where both
+     * users hold a [ParticipantType.PERSONAL] record. If no shared conversation exists,
+     * a new one is created and both participant records are written atomically before
+     * the ID is returned, preventing duplicate conversations on subsequent calls.
      */
     fun startConversation(targetUserId: String, onConversationReady: (String) -> Unit) {
         if (_uiState.value.isMessageLoading) return
@@ -119,10 +111,6 @@ class ProfileViewModel @Inject constructor(
                 val currentUserId = firebaseAuth.currentUser?.uid
                     ?: throw IllegalStateException("Not signed in.")
 
-                // Delegate shared-parentId resolution to the repository layer.
-                // fetchSharedParentId queries the participant sub-collection for the
-                // first parentId where both users have a PERSONAL participant record,
-                // keeping set-intersection logic out of the ViewModel entirely.
                 val existingId = messageRepository
                     .fetchSharedParentId(currentUserId, targetUserId)
                     .getOrNull()
@@ -130,15 +118,14 @@ class ProfileViewModel @Inject constructor(
                 if (!existingId.isNullOrBlank()) {
                     existingId
                 } else {
-                    val targetUser = userRepository.fetchUserById(targetUserId)
+                    val targetUser = userRepository.fetchUser(targetUserId)
+                        .getOrThrow()
                         ?: throw NoSuchElementException("Target user not found.")
 
                     val title = targetUser.displayName.takeIf { it.isNotBlank() }
                         ?: targetUser.username.takeIf { it.isNotBlank() }
                         ?: "Chat"
 
-                    // createConversation atomically writes the conversation document
-                    // and the current user's ADMIN participant record in a single batch.
                     val conversationId = messageRepository.createConversation(
                         Conversation(
                             creatorId = currentUserId,
@@ -147,9 +134,6 @@ class ProfileViewModel @Inject constructor(
                         )
                     ).getOrThrow()
 
-                    // Write the target user's participant record so that future
-                    // fetchSharedParentId calls locate this conversation from either
-                    // user's perspective, preventing duplicate conversations.
                     messageRepository.addParticipant(
                         parentId    = conversationId,
                         uid         = targetUserId,
@@ -191,14 +175,17 @@ class ProfileViewModel @Inject constructor(
             val isOwner    = profileUserId == null || profileUserId == currentUid
 
             runCatching {
-                val user = when {
-                    isOwner && currentUid != null -> userRepository.fetchCurrentUser(currentUid)
-                    profileUserId != null         -> userRepository.fetchUserById(profileUserId)
-                    else                          -> null
-                } ?: throw NoSuchElementException("User not found.")
+                val uid = when {
+                    isOwner -> currentUid    ?: throw NoSuchElementException("User not found.")
+                    else    -> profileUserId ?: throw NoSuchElementException("User not found.")
+                }
+
+                val user = userRepository.fetchUser(uid)
+                    .getOrThrow()
+                    ?: throw NoSuchElementException("User not found.")
 
                 val isFollowing = if (!isOwner && currentUid != null) {
-                    userRepository.isFollowing(currentUid, user.uid)
+                    userRepository.isFollowing(currentUid, user.uid).getOrElse { false }
                 } else false
 
                 user to isFollowing
