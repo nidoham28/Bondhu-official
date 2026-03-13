@@ -2,58 +2,44 @@ package com.nidoham.server.domain.message
 
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 import com.nidoham.server.util.ParticipantType
 
+/**
+ * Represents a conversation entity — either a direct (personal) message thread,
+ * a group conversation, or a channel.
+ *
+ * The [parentId] field doubles as the Firestore document ID and the key used by
+ * [ParticipantManager] to locate the participant sub-collection at
+ * `participant/{parentId}/members/{uid}`.
+ *
+ * @property parentId        Firestore document ID; also serves as the participant parent key.
+ * @property creatorId       Firebase UID of the user who created the conversation.
+ * @property title           Display name for group conversations and channels; null for personal threads.
+ * @property subtitle        Optional tagline or description.
+ * @property photoUrl        imgbb-hosted photo URL for the conversation avatar.
+ * @property type            Conversation type. Defaults to [ParticipantType.PERSONAL].
+ * @property lastMessage     Denormalized preview of the most recent message.
+ * @property createdAt       Server-assigned timestamp of when the conversation was created.
+ * @property updatedAt       Server-assigned timestamp of the most recent write to this document.
+ * @property subscriberCount Total number of participants in the conversation.
+ * @property messageCount    Total number of messages sent in the conversation.
+ * @property translated      Whether automatic translation is enabled for this conversation.
+ */
 data class Conversation(
-    @get:PropertyName("id")
-     @set:PropertyName("id")
-     @field:DocumentId
-     var id: String = "",
-
-    @get:PropertyName("creator_id")
-     @set:PropertyName("creator_id")
-     var creatorId: String? = null,
-
-    @get:PropertyName("title")
-     @set:PropertyName("title")
-     var title: String? = null,
-
-    @get:PropertyName("subtitle")
-     @set:PropertyName("subtitle")
-     var subtitle: String? = null,
-
-    @get:PropertyName("photo_url")
-     @set:PropertyName("photo_url")
-     var photoUrl: String? = null,
-
-    @get:PropertyName("type")
-     @set:PropertyName("type")
-     var type: String = ParticipantType.PERSONAL.value,
-
-    @get:PropertyName("last_message")
-     @set:PropertyName("last_message")
-     var lastMessage: String? = null,
-
-    @field:ServerTimestamp
-    @get:PropertyName("created_at")
-    @set:PropertyName("created_at")
+    @DocumentId
+    var parentId: String = "",
+    var creatorId: String? = null,
+    var title: String? = null,
+    var subtitle: String? = null,
+    var photoUrl: String? = null,
+    var type: String = ParticipantType.PERSONAL.value,
+    var lastMessage: MessagePreview? = null,
+    @ServerTimestamp
     var createdAt: Timestamp? = null,
-
-    @get:PropertyName("updated_at")
-    @set:PropertyName("updated_at")
+    @ServerTimestamp
     var updatedAt: Timestamp? = null,
-
-    @get:PropertyName("subscriber_count")
-    @set:PropertyName("subscriber_count")
     var subscriberCount: Long = 0L,
-
-    @get:PropertyName("message_count")
-    @set:PropertyName("message_count")
     var messageCount: Long = 0L,
-
-    @get:PropertyName("translated")
-    @set:PropertyName("translated")
-    var translated: Boolean = false
+    var translated: Boolean = false,
 )

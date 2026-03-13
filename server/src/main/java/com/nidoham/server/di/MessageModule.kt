@@ -18,38 +18,49 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object MessageModule {
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Managers
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Provides
     @Singleton
-    fun provideConversationManager(
-        firestore: FirebaseFirestore
-    ): ConversationManager = ConversationManager(firestore)
+    fun provideParticipantManager(
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth
+    ): ParticipantManager = ParticipantManager(firestore, auth)
 
     @Provides
     @Singleton
     fun provideMessageManager(
-        firestore: FirebaseFirestore
-    ): MessageManager = MessageManager(firestore)
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth
+    ): MessageManager = MessageManager(firestore, auth)
 
-    // FIX: ParticipantManager was never provided. The repository was silently
-    //      constructing its own unmanaged instance via the Kotlin default parameter,
-    //      bypassing the Hilt graph and the shared FirebaseFirestore singleton.
     @Provides
     @Singleton
-    fun provideParticipantManager(
-        firestore: FirebaseFirestore
-    ): ParticipantManager = ParticipantManager(firestore)
+    fun provideConversationManager(
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
+        participantManager: ParticipantManager,
+        messageManager: MessageManager
+    ): ConversationManager = ConversationManager(
+        firestore,
+        auth,
+        participantManager,
+        messageManager
+    )
 
-    // FIX: TypingManager was never provided, for the same reason as above.
     @Provides
     @Singleton
     fun provideTypingManager(
-        firestore: FirebaseFirestore,
+        database: FirebaseDatabase,
         auth: FirebaseAuth
-    ): TypingManager = TypingManager(firestore, auth)
+    ): TypingManager = TypingManager(database, auth)
 
-    // FIX: Only two of four required managers were passed, leaving ParticipantManager
-    //      and TypingManager to be constructed outside the DI graph. All four are now
-    //      injected explicitly so every dependency is a true Hilt-managed singleton.
+    // ─────────────────────────────────────────────────────────────────────────
+    // Repository
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Provides
     @Singleton
     fun provideMessageRepository(

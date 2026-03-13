@@ -8,53 +8,66 @@ import androidx.paging.PagingState
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.nidoham.server.domain.message.Conversation
+import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.domain.participant.Participant
 import com.nidoham.server.util.ParticipantRole
 import com.nidoham.server.util.ParticipantType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /**
- * Manages all Conversation-related Firestore operations.
+ * Manages all Firestore operations for the conversations collection.
  *
- * Firestore schema:
- *   conversations/{conversationId}               — Conversation document
- *   participant/{conversationId}/member/{userId}  — Participant sub-collection
+ * Schema:
+ *   conversations/{conversationId}                — [Conversation] document
+ *   participant/{conversationId}/members/{userId}  — Participant sub-collection (owned by [ParticipantManager])
  *
- * Every operation that targets a specific conversation is keyed by [conversationId].
- * Operations that involve a participant are additionally keyed by [userId].
+ * Participant and message operations are fully delegated to [ParticipantManager]
+ * and [MessageManager] respectively. The only exception is [createConversation],
+ * which uses a direct Firestore batch to guarantee that the conversation document
+ * and its first participant record are written atomically.
  *
- * @param firestore Injectable [FirebaseFirestore] instance.
- * @param auth      Injectable [FirebaseAuth] instance.
+ * @param firestore          Injectable [FirebaseFirestore] instance.
+ * @param auth               Injectable [FirebaseAuth] instance.
+ * @param participantManager Injectable [ParticipantManager] for all participant operations.
+ * @param messageManager     Injectable [MessageManager] for all message operations.
  */
 class ConversationManager(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val participantManager: ParticipantManager = ParticipantManager(),
+    private val messageManager: MessageManager = MessageManager()
 ) {
 
     companion object {
-        private const val CONVERSATION_COLLECTION = "conversations"
-        private const val PARTICIPANT_ROOT        = "participant"
-        private const val PARTICIPANT_SUB         = "member"          // participant/{conversationId}/member/{userId}
-        private const val PAGE_SIZE               = 20
+        private const val CONVERSATIONS  = "conversations"
+        private const val PARTICIPANT_ROOT = "participant"
+        private const val MEMBERS        = "members"   // must match ParticipantManager.MEMBERS
+        private const val PAGE_SIZE      = 20
 
-        private const val FIELD_UID               = "uid"
-        private const val FIELD_PARENT_ID         = "parent_id"
-        private const val FIELD_TYPE              = "type"
-        private const val FIELD_CREATOR_ID        = "creator_id"
-        private const val FIELD_TITLE             = "title"
-        private const val FIELD_LAST_MESSAGE      = "last_message"
-        private const val FIELD_UPDATED_AT        = "updated_at"
-        private const val FIELD_CREATED_AT        = "created_at"
-        private const val FIELD_SUBSCRIBER_COUNT  = "subscriber_count"
-        private const val FIELD_MESSAGE_COUNT     = "message_count"
-        private const val FIELD_TRANSLATED        = "translated"
+        private const val FIELD_PARENT_ID        = "parentId"
+        private const val FIELD_CREATOR_ID       = "creatorId"
+        private const val FIELD_TITLE            = "title"
+        private const val FIELD_SUBTITLE         = "subtitle"
+        private const val FIELD_TYPE             = "type"
+        private const val FIELD_LAST_MESSAGE     = "lastMessage"
+        private const val FIELD_CREATED_AT       = "createdAt"
+        private const val FIELD_UPDATED_AT       = "updatedAt"
+        private const val FIELD_SUBSCRIBER_COUNT = "subscriberCount"
+        private const val FIELD_MESSAGE_COUNT    = "messageCount"
+        private const val FIELD_TRANSLATED       = "translated"
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -62,15 +75,18 @@ class ConversationManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun conversationsCollection() =
-        firestore.collection(CONVERSATION_COLLECTION)
+        firestore.collection(CONVERSATIONS)
 
     private fun conversationDocument(conversationId: String) =
         conversationsCollection().document(conversationId)
 
+    // The participant document reference is constructed locally only for the
+    // atomic batch in createConversation. All other participant access goes
+    // through ParticipantManager.
     private fun participantDocument(conversationId: String, userId: String) =
         firestore.collection(PARTICIPANT_ROOT)
             .document(conversationId)
-            .collection(PARTICIPANT_SUB)
+            .collection(MEMBERS)
             .document(userId)
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -79,50 +95,48 @@ class ConversationManager(
 
     /**
      * Creates a new [Conversation] document and atomically adds the currently
-     * authenticated user as the sole initial participant in a single batch write.
+     * authenticated user as the initial [ParticipantRole.ADMIN] in a single
+     * Firestore batch write. Atomicity here is non-negotiable — a conversation
+     * document without a corresponding participant record is an invalid state.
      *
-     * The conversation's [Conversation.id] is auto-generated by Firestore and
-     * written back into the document. The current user is assigned the
-     * [ParticipantRole.ADMIN] role, since they are the creator. The participant
-     * type mirrors the conversation type (personal vs. group).
+     * If [Conversation.parentId] is blank, Firestore auto-generates the document ID.
      *
-     * @param conversation The [Conversation] object to persist. The [Conversation.id]
-     *                     field may be left blank; it will be assigned automatically.
-     * @return The auto-generated conversation ID on success.
+     * @param conversation The [Conversation] to persist.
+     * @return The conversation document ID on success.
      */
     suspend fun createConversation(conversation: Conversation): Result<String> = runCatching {
         val currentUser = auth.currentUser
             ?: error("No authenticated user is signed in.")
 
-        val docRef = if (conversation.id.isBlank()) {
-            conversationsCollection().document()
-        } else {
-            conversationDocument(conversation.id)
-        }
-
+        val docRef = if (conversation.parentId.isBlank()) conversationsCollection().document()
+        else conversationDocument(conversation.parentId)
         val conversationId = docRef.id
-        val populated      = conversation.copy(id = conversationId, creatorId = currentUser.uid)
 
-        val participantRef = participantDocument(conversationId, currentUser.uid)
-        val participant    = Participant(
+        val populated = conversation.copy(
+            parentId  = conversationId,
+            creatorId = currentUser.uid
+        )
+        val participant = Participant(
             uid      = currentUser.uid,
-            parentId = conversationId,           // fixed: was id = conversationId
+            parentId = conversationId,
             role     = ParticipantRole.ADMIN.value,
             type     = conversation.type
         )
 
+        // Direct batch used intentionally — participantManager.addParticipant()
+        // issues its own independent write and cannot participate in this batch.
         firestore.batch().apply {
             set(docRef, populated)
-            set(participantRef, participant)
+            set(participantDocument(conversationId, currentUser.uid), participant)
         }.commit().await()
 
         conversationId
     }
 
     /**
-     * Updates specific fields of an existing [Conversation] document. Automatically
-     * stamps [FIELD_UPDATED_AT] with the current server time if not already included
-     * in [fields].
+     * Updates specific fields on an existing [Conversation] document.
+     * Automatically stamps [FIELD_UPDATED_AT] with the current server timestamp
+     * unless it is already present in [fields].
      *
      * @param conversationId The conversation document ID.
      * @param fields         Map of Firestore field names to their new values.
@@ -133,52 +147,46 @@ class ConversationManager(
     ): Result<Unit> = runCatching {
         require(fields.isNotEmpty()) { "Update fields must not be empty." }
         val stamped = if (FIELD_UPDATED_AT !in fields) {
-            fields + (FIELD_UPDATED_AT to com.google.firebase.firestore.FieldValue.serverTimestamp())
+            fields + (FIELD_UPDATED_AT to FieldValue.serverTimestamp())
         } else fields
         conversationDocument(conversationId).update(stamped).await()
     }
 
     /**
-     * Updates the last message preview on a conversation document. Typically
-     * called after a message is successfully sent.
+     * Replaces the [lastMessage] preview on a conversation document. Call this
+     * after a message is successfully written via [MessageManager].
      *
      * @param conversationId The conversation document ID.
-     * @param preview        The content string to store as the last message preview.
+     * @param preview        The [MessagePreview] to store.
      */
     suspend fun updateLastMessage(
         conversationId: String,
-        preview: String
+        preview: MessagePreview
     ): Result<Unit> = updateConversation(
         conversationId,
         mapOf(FIELD_LAST_MESSAGE to preview)
     )
 
-    /**
-     * Increments [FIELD_MESSAGE_COUNT] by 1 using a Firestore atomic increment.
-     *
-     * @param conversationId The conversation document ID.
-     */
+    /** Atomically increments [FIELD_MESSAGE_COUNT] by 1. */
     suspend fun incrementMessageCount(conversationId: String): Result<Unit> =
-        updateConversation(
-            conversationId,
-            mapOf(FIELD_MESSAGE_COUNT to com.google.firebase.firestore.FieldValue.increment(1))
-        )
+        updateConversation(conversationId, mapOf(FIELD_MESSAGE_COUNT to FieldValue.increment(1)))
 
-    /**
-     * Decrements [FIELD_MESSAGE_COUNT] by 1 using a Firestore atomic increment.
-     *
-     * @param conversationId The conversation document ID.
-     */
+    /** Atomically decrements [FIELD_MESSAGE_COUNT] by 1. */
     suspend fun decrementMessageCount(conversationId: String): Result<Unit> =
-        updateConversation(
-            conversationId,
-            mapOf(FIELD_MESSAGE_COUNT to com.google.firebase.firestore.FieldValue.increment(-1))
-        )
+        updateConversation(conversationId, mapOf(FIELD_MESSAGE_COUNT to FieldValue.increment(-1)))
+
+    /** Atomically increments [FIELD_SUBSCRIBER_COUNT] by 1. */
+    suspend fun incrementSubscriberCount(conversationId: String): Result<Unit> =
+        updateConversation(conversationId, mapOf(FIELD_SUBSCRIBER_COUNT to FieldValue.increment(1)))
+
+    /** Atomically decrements [FIELD_SUBSCRIBER_COUNT] by 1. */
+    suspend fun decrementSubscriberCount(conversationId: String): Result<Unit> =
+        updateConversation(conversationId, mapOf(FIELD_SUBSCRIBER_COUNT to FieldValue.increment(-1)))
 
     /**
-     * Permanently deletes a conversation document. This does not cascade-delete
-     * its messages sub-collection; call [MessageManager.deleteAllMessages] first
-     * if a full wipe is required.
+     * Permanently deletes a [Conversation] document. Does not cascade-delete its
+     * messages sub-collection; call [MessageManager.deleteAllMessages] first if a
+     * full wipe is required.
      *
      * @param conversationId The conversation document ID to delete.
      */
@@ -191,61 +199,46 @@ class ConversationManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Fetches a single [Conversation] document by its ID.
+     * Fetches a single [Conversation] by its ID, or null if it does not exist.
      *
-     * @return The [Conversation] object, or null if it does not exist.
+     * @param conversationId The conversation document ID.
      */
     suspend fun fetchConversation(conversationId: String): Result<Conversation?> = runCatching {
-        conversationDocument(conversationId)
-            .get()
-            .await()
-            .toObject(Conversation::class.java)
+        conversationDocument(conversationId).get().await().toObject(Conversation::class.java)
     }
 
     /**
-     * Fetches all conversations in which a given user is a participant by
-     * performing a collection group query on the member sub-collection and
-     * resolving each parent conversation document.
+     * Fetches all conversations in which [userId] is a participant. Resolves
+     * the conversation IDs via [ParticipantManager.fetchJoinedIds], then
+     * fetches the corresponding conversation documents in parallel.
      *
-     * The conversation ID is read from the stored [FIELD_PARENT_ID] field rather
-     * than derived from the document path, ensuring correctness regardless of
-     * nesting depth.
-     *
-     * Requires a composite Firestore index on (uid, type) in the member
-     * collection group.
-     *
-     * @param userId The Firebase UID of the user whose conversations to retrieve.
+     * @param userId The Firebase UID of the target user.
      * @param type   Participant type filter; defaults to [ParticipantType.PERSONAL].
-     * @return A list of [Conversation] objects the user is a member of.
      */
     suspend fun fetchConversationsForUser(
         userId: String,
         type: ParticipantType = ParticipantType.PERSONAL
     ): Result<List<Conversation>> = runCatching {
-        val conversationIds = firestore.collectionGroup(PARTICIPANT_SUB)
-            .whereEqualTo(FIELD_UID, userId)
-            .whereEqualTo(FIELD_TYPE, type.value)
-            .get()
-            .await()
-            .documents
-            .mapNotNull { it.getString(FIELD_PARENT_ID) }   // fixed: read field, not path
-
-        conversationIds
-            .map { conversationDocument(it).get().await() }
-            .mapNotNull { it.toObject(Conversation::class.java) }
+        val ids = participantManager.fetchJoinedIds(userId, type).getOrThrow()
+        coroutineScope {
+            ids.map { id -> async { conversationDocument(id).get().await() } }
+                .awaitAll()
+                .mapNotNull { it.toObject(Conversation::class.java) }
+        }
     }
 
     /**
-     * Fetches conversations for the currently authenticated user.
+     * Fetches all conversations the currently authenticated user has joined.
+     * Delegates ID resolution to [ParticipantManager].
      *
      * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
      */
     suspend fun fetchCurrentUserConversations(
         type: ParticipantType = ParticipantType.PERSONAL
     ): Result<List<Conversation>> {
-        val currentUserId = auth.currentUser?.uid
+        val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("No authenticated user is signed in."))
-        return fetchConversationsForUser(currentUserId, type)
+        return fetchConversationsForUser(uid, type)
     }
 
     /**
@@ -257,10 +250,7 @@ class ConversationManager(
     suspend fun fetchConversationsFiltered(
         filter: ConversationFilter
     ): Result<List<Conversation>> = runCatching {
-        filter.applyTo(conversationsCollection())
-            .get()
-            .await()
-            .toObjects(Conversation::class.java)
+        filter.applyTo(conversationsCollection()).get().await().toObjects(Conversation::class.java)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -268,23 +258,15 @@ class ConversationManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Searches conversations whose [title] field starts with the given [prefix],
-     * optionally narrowed by [ConversationFilter].
+     * Searches conversations whose [title] starts with [prefix] using a
+     * lexicographic range query. Case-sensitive; normalise to lowercase at write
+     * time and pass a lowercase prefix for case-insensitive behaviour.
      *
-     * Firestore does not support native full-text search. This method uses a
-     * lexicographic range query — [whereGreaterThanOrEqualTo] paired with
-     * [whereLessThanOrEqualTo] against the Unicode sentinel `\uf8ff` — which
-     * matches all strings that begin with [prefix]. The query is case-sensitive;
-     * pass a lowercased [prefix] and store titles in lowercase if case-insensitive
-     * matching is required.
+     * Requires an ascending index on `title`.
      *
-     * A single-field ascending index on `title` is required. If [filter] also
-     * orders or filters on a second field, a composite index will be needed.
-     *
-     * @param prefix The title prefix to search for. Must not be blank.
-     * @param filter Optional [ConversationFilter] to further narrow results.
-     * @param limit  Maximum number of results to return. Defaults to 20.
-     * @return A list of matching [Conversation] objects ordered by title ascending.
+     * @param prefix The title prefix to match; must not be blank.
+     * @param filter Optional [ConversationFilter] for additional constraints.
+     * @param limit  Maximum results to return.
      */
     suspend fun searchConversationsByTitle(
         prefix: String,
@@ -292,7 +274,7 @@ class ConversationManager(
         limit: Long = 20
     ): Result<List<Conversation>> = runCatching {
         require(prefix.isNotBlank()) { "Search prefix must not be blank." }
-        val end      = prefix.trimEnd() + "\uf8ff"
+        val end = prefix.trimEnd() + "\uf8ff"
         var query: Query = conversationsCollection()
             .whereGreaterThanOrEqualTo(FIELD_TITLE, prefix)
             .whereLessThanOrEqualTo(FIELD_TITLE, end)
@@ -301,7 +283,6 @@ class ConversationManager(
         filter?.type?.let       { query = query.whereEqualTo(FIELD_TYPE, it.value) }
         filter?.creatorId?.let  { query = query.whereEqualTo(FIELD_CREATOR_ID, it) }
         filter?.translated?.let { query = query.whereEqualTo(FIELD_TRANSLATED, it) }
-
         query.get().await().toObjects(Conversation::class.java)
     }
 
@@ -311,9 +292,8 @@ class ConversationManager(
      *
      * Requires an ascending index on `subtitle`.
      *
-     * @param prefix The subtitle prefix to search for. Must not be blank.
-     * @param limit  Maximum number of results to return. Defaults to 20.
-     * @return A list of matching [Conversation] objects ordered by subtitle ascending.
+     * @param prefix The subtitle prefix to match; must not be blank.
+     * @param limit  Maximum results to return.
      */
     suspend fun searchConversationsBySubtitle(
         prefix: String,
@@ -322,9 +302,9 @@ class ConversationManager(
         require(prefix.isNotBlank()) { "Search prefix must not be blank." }
         val end = prefix.trimEnd() + "\uf8ff"
         conversationsCollection()
-            .whereGreaterThanOrEqualTo("subtitle", prefix)
-            .whereLessThanOrEqualTo("subtitle", end)
-            .orderBy("subtitle", Query.Direction.ASCENDING)
+            .whereGreaterThanOrEqualTo(FIELD_SUBTITLE, prefix)
+            .whereLessThanOrEqualTo(FIELD_SUBTITLE, end)
+            .orderBy(FIELD_SUBTITLE, Query.Direction.ASCENDING)
             .limit(limit)
             .get()
             .await()
@@ -332,12 +312,12 @@ class ConversationManager(
     }
 
     /**
-     * Fetches all conversations created by a specific user, ordered by creation
-     * date descending.
+     * Fetches all conversations created by [creatorId], ordered by creation date
+     * descending. Optionally filtered by [ParticipantType].
      *
-     * @param creatorId The Firebase UID of the creator to search for.
+     * @param creatorId The Firebase UID of the creator.
      * @param type      Optional participant type filter.
-     * @param limit     Maximum number of results to return. Defaults to 20.
+     * @param limit     Maximum results to return.
      */
     suspend fun searchConversationsByCreator(
         creatorId: String,
@@ -353,28 +333,59 @@ class ConversationManager(
         query.get().await().toObjects(Conversation::class.java)
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Real-Time Listeners
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Emits an updated [Conversation] whenever the given document changes, or
+     * null if it no longer exists.
+     *
+     * @param conversationId The conversation document ID to observe.
+     */
+    fun observeConversation(conversationId: String): Flow<Conversation?> = callbackFlow {
+        val reg: ListenerRegistration =
+            conversationDocument(conversationId).addSnapshotListener { snapshot, error ->
+                if (error != null) { close(error); return@addSnapshotListener }
+                trySend(snapshot?.toObject(Conversation::class.java))
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Emits an updated list of [Conversation] objects whenever the collection
+     * changes. An optional [ConversationFilter] narrows the observed query.
+     *
+     * @param filter Optional [ConversationFilter] to restrict the observed query.
+     */
+    fun observeConversations(
+        filter: ConversationFilter? = null
+    ): Flow<List<Conversation>> = callbackFlow {
+        val base  = conversationsCollection()
+        val query = filter?.applyTo(base) ?: base
+
+        val reg: ListenerRegistration = query.addSnapshotListener { snapshot, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            trySend(snapshot?.toObjects(Conversation::class.java) ?: emptyList())
+        }
+        awaitClose { reg.remove() }
+    }
+
     /**
      * Searches conversations by [title] prefix in real time, emitting a fresh
-     * result list on every Firestore change that affects the matched documents.
-     * This is suitable for a live search bar where results update as the user
-     * types.
+     * result list on every Firestore change. Suitable for a live search bar.
      *
-     * The listener is removed automatically when the returned [Flow] is cancelled.
-     *
-     * @param prefix The title prefix to observe. Must not be blank.
+     * @param prefix The title prefix to observe.
      * @param filter Optional [ConversationFilter] for additional constraints.
-     * @param limit  Maximum number of results to stream. Defaults to 20.
+     * @param limit  Maximum results to stream.
      */
     fun observeSearchByTitle(
         prefix: String,
         filter: ConversationFilter? = null,
         limit: Long = 20
     ): Flow<List<Conversation>> = callbackFlow {
-        if (prefix.isBlank()) {
-            trySend(emptyList())
-            awaitClose()
-            return@callbackFlow
-        }
+        if (prefix.isBlank()) { trySend(emptyList()); awaitClose(); return@callbackFlow }
+
         val end = prefix.trimEnd() + "\uf8ff"
         var query: Query = conversationsCollection()
             .whereGreaterThanOrEqualTo(FIELD_TITLE, prefix)
@@ -385,191 +396,102 @@ class ConversationManager(
         filter?.creatorId?.let  { query = query.whereEqualTo(FIELD_CREATOR_ID, it) }
         filter?.translated?.let { query = query.whereEqualTo(FIELD_TRANSLATED, it) }
 
-        val registration: ListenerRegistration = query.addSnapshotListener { snapshot, error ->
+        val reg: ListenerRegistration = query.addSnapshotListener { snapshot, error ->
             if (error != null) { close(error); return@addSnapshotListener }
             trySend(snapshot?.toObjects(Conversation::class.java) ?: emptyList())
         }
-        awaitClose { registration.remove() }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Real-Time Listeners
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Emits an updated [Conversation] object whenever the given document changes,
-     * or null if the document no longer exists.
-     *
-     * The underlying [ListenerRegistration] is removed automatically when the
-     * returned [Flow] is cancelled.
-     *
-     * @param conversationId The conversation document ID to observe.
-     */
-    fun observeConversation(conversationId: String): Flow<Conversation?> = callbackFlow {
-        val registration: ListenerRegistration =
-            conversationDocument(conversationId).addSnapshotListener { snapshot, error ->
-                if (error != null) { close(error); return@addSnapshotListener }
-                trySend(snapshot?.toObject(Conversation::class.java))
-            }
-        awaitClose { registration.remove() }
+        awaitClose { reg.remove() }
     }
 
     /**
-     * Emits an updated list of [Conversation] objects whenever any conversation
-     * matching the given [ConversationFilter] changes. If no filter is provided,
-     * the entire conversations collection is observed.
-     *
-     * @param filter Optional [ConversationFilter] to narrow the listener query.
-     */
-    fun observeConversations(
-        filter: ConversationFilter? = null
-    ): Flow<List<Conversation>> = callbackFlow {
-        val baseQuery = conversationsCollection() as Query
-        val query     = filter?.applyTo(baseQuery) ?: baseQuery
-
-        val registration: ListenerRegistration = query.addSnapshotListener { snapshot, error ->
-            if (error != null) { close(error); return@addSnapshotListener }
-            trySend(snapshot?.toObjects(Conversation::class.java) ?: emptyList())
-        }
-        awaitClose { registration.remove() }
-    }
-
-    /**
-     * Emits an updated list of conversation IDs whenever the currently
-     * authenticated user's participant membership changes — for example, when
-     * they join a new conversation or are removed from an existing one.
-     *
-     * The conversation ID is read from the stored [FIELD_PARENT_ID] field on
-     * each matching participant document, rather than derived from the path.
-     *
-     * Requires a composite Firestore index on (uid, type) for the
-     * [PARTICIPANT_SUB] collection group.
+     * Emits the conversation IDs of all conversations the currently authenticated
+     * user has joined, updating in real time as membership changes. Delegates
+     * entirely to [ParticipantManager.observeJoinedIds].
      *
      * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
-     * @return A cold [Flow] that emits a fresh list of conversation IDs on every
-     *         membership change.
      */
     fun observeCurrentUserConversationIds(
         type: ParticipantType = ParticipantType.PERSONAL
-    ): Flow<List<String>> = callbackFlow {
-        val currentUserId = auth.currentUser?.uid
-            ?: run { close(IllegalStateException("No authenticated user is signed in.")); return@callbackFlow }
-
-        val registration: ListenerRegistration = firestore
-            .collectionGroup(PARTICIPANT_SUB)
-            .whereEqualTo(FIELD_UID, currentUserId)
-            .whereEqualTo(FIELD_TYPE, type.value)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) { close(error); return@addSnapshotListener }
-                val ids = snapshot?.documents
-                    ?.mapNotNull { it.getString(FIELD_PARENT_ID) }  // fixed: read field, not path
-                    ?: emptyList()
-                trySend(ids)
-            }
-
-        awaitClose { registration.remove() }
+    ): Flow<List<String>> {
+        val uid = auth.currentUser?.uid
+            ?: throw IllegalStateException("No authenticated user is signed in.")
+        return participantManager.observeJoinedIds(uid, type)
     }
 
     /**
-     * Emits a fully hydrated list of [Conversation] objects for every conversation
-     * the currently authenticated user has joined, updating in real time as their
-     * membership or any of the joined conversation documents change.
+     * Emits a fully hydrated list of [Conversation] objects for all conversations
+     * the authenticated user has joined, updating in real time as either membership
+     * or any joined conversation document changes.
      *
-     * The conversation ID is read from the stored [FIELD_PARENT_ID] field on
-     * each matching participant document, rather than derived from the path.
+     * Membership changes are observed via [ParticipantManager.observeJoinedIds].
+     * For each resolved conversation ID, an individual Firestore document listener
+     * is maintained. Inner listeners are replaced atomically on membership changes
+     * and fully removed when the [Flow] is cancelled.
      *
-     * The implementation uses two listener layers:
-     *  1. A collection group listener on [PARTICIPANT_SUB] to detect membership
-     *     changes and resolve the current set of conversation IDs.
-     *  2. An individual document snapshot listener for each resolved conversation
-     *     ID, so that changes to a conversation's content are also reflected immediately.
-     *
-     * All inner listeners are replaced atomically whenever the membership set
-     * changes, and every listener is removed when the [Flow] is cancelled.
-     *
-     * Note: For users who belong to a very large number of conversations,
-     * consider using [observeCurrentUserConversationIds] combined with
-     * [fetchConversationsPaged] to avoid attaching an unbounded number of
-     * document listeners simultaneously.
+     * For users with a very large number of conversations, prefer combining
+     * [observeCurrentUserConversationIds] with [fetchConversationsPaged] to avoid
+     * attaching an unbounded number of document listeners simultaneously.
      *
      * @param type Participant type filter; defaults to [ParticipantType.PERSONAL].
-     * @return A cold [Flow] that emits an updated list of [Conversation] objects
-     *         whenever membership or any joined conversation document changes.
      */
     fun observeCurrentUserConversations(
         type: ParticipantType = ParticipantType.PERSONAL
     ): Flow<List<Conversation>> = callbackFlow {
-        val currentUserId = auth.currentUser?.uid
+        val uid = auth.currentUser?.uid
             ?: run { close(IllegalStateException("No authenticated user is signed in.")); return@callbackFlow }
 
-        val conversationSnapshots = mutableMapOf<String, Conversation?>()
-        val innerRegistrations    = mutableMapOf<String, ListenerRegistration>()
+        val snapshots = mutableMapOf<String, Conversation?>()
+        val innerRegs = mutableMapOf<String, ListenerRegistration>()
 
-        fun emitMerged() {
-            trySend(conversationSnapshots.values.filterNotNull())
-        }
+        fun emitMerged() { trySend(snapshots.values.filterNotNull()) }
 
-        val membershipRegistration: ListenerRegistration = firestore
-            .collectionGroup(PARTICIPANT_SUB)
-            .whereEqualTo(FIELD_UID, currentUserId)
-            .whereEqualTo(FIELD_TYPE, type.value)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) { close(error); return@addSnapshotListener }
+        // Delegate membership observation to ParticipantManager.
+        val job = launch {
+            participantManager.observeJoinedIds(uid, type).collectLatest { currentIds ->
+                val currentSet = currentIds.toSet()
 
-                val currentIds = snapshot?.documents
-                    ?.mapNotNull { it.getString(FIELD_PARENT_ID) }  // fixed: read field, not path
-                    ?.toSet()
-                    ?: emptySet()
-
-                val removedIds = innerRegistrations.keys - currentIds
-                removedIds.forEach { id ->
-                    innerRegistrations.remove(id)?.remove()
-                    conversationSnapshots.remove(id)
+                (innerRegs.keys - currentSet).forEach { id ->
+                    innerRegs.remove(id)?.remove()
+                    snapshots.remove(id)
                 }
 
-                val addedIds = currentIds - innerRegistrations.keys
-                addedIds.forEach { conversationId ->
-                    val reg = conversationDocument(conversationId)
-                        .addSnapshotListener { docSnapshot, docError ->
-                            if (docError != null) { close(docError); return@addSnapshotListener }
-                            conversationSnapshots[conversationId] =
-                                docSnapshot?.toObject(Conversation::class.java)
+                (currentSet - innerRegs.keys).forEach { conversationId ->
+                    innerRegs[conversationId] = conversationDocument(conversationId)
+                        .addSnapshotListener { doc, error ->
+                            if (error != null) { close(error); return@addSnapshotListener }
+                            snapshots[conversationId] = doc?.toObject(Conversation::class.java)
                             emitMerged()
                         }
-                    innerRegistrations[conversationId] = reg
                 }
 
-                if (addedIds.isEmpty()) emitMerged()
+                if ((currentSet - innerRegs.keys).isEmpty()) emitMerged()
             }
+        }
 
         awaitClose {
-            membershipRegistration.remove()
-            innerRegistrations.values.forEach { it.remove() }
+            job.cancel()
+            innerRegs.values.forEach { it.remove() }
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Paging3 Support
+    // Paging3
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a [Flow] of cursor-paginated [PagingData] over the conversations
-     * collection, ordered by [FIELD_UPDATED_AT] descending so the most recently
-     * active conversations appear first.
+     * Returns a cursor-paginated [Flow] over the conversations collection, ordered
+     * by [FIELD_UPDATED_AT] descending so the most recently active conversations
+     * appear first.
      *
-     * @param pageSize Number of documents to load per page.
+     * @param pageSize Documents per page.
      */
     fun fetchConversationsPaged(
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Conversation>> = Pager(
-        config = PagingConfig(
-            pageSize           = pageSize,
-            enablePlaceholders = false,
-            prefetchDistance   = pageSize / 2
-        ),
+        config = PagingConfig(pageSize = pageSize, enablePlaceholders = false, prefetchDistance = pageSize / 2),
         pagingSourceFactory = {
             ConversationPagingSource(
-                query = conversationsCollection()
+                conversationsCollection()
                     .orderBy(FIELD_UPDATED_AT, Query.Direction.DESCENDING)
                     .limit(pageSize.toLong())
             )
@@ -577,25 +499,19 @@ class ConversationManager(
     ).flow
 
     /**
-     * Returns a [Flow] of cursor-paginated [PagingData] applying a
-     * [ConversationFilter], ordered by [FIELD_UPDATED_AT] descending.
+     * Returns a cursor-paginated [Flow] with a [ConversationFilter] applied.
      *
-     * @param filter   The [ConversationFilter] to apply.
-     * @param pageSize Number of documents to load per page.
+     * @param filter   [ConversationFilter] to apply before paginating.
+     * @param pageSize Documents per page.
      */
     fun fetchConversationsFilteredPaged(
         filter: ConversationFilter,
         pageSize: Int = PAGE_SIZE
     ): Flow<PagingData<Conversation>> = Pager(
-        config = PagingConfig(
-            pageSize           = pageSize,
-            enablePlaceholders = false,
-            prefetchDistance   = pageSize / 2
-        ),
+        config = PagingConfig(pageSize = pageSize, enablePlaceholders = false, prefetchDistance = pageSize / 2),
         pagingSourceFactory = {
             ConversationPagingSource(
-                query = filter.applyTo(conversationsCollection())
-                    .limit(pageSize.toLong())
+                filter.applyTo(conversationsCollection()).limit(pageSize.toLong())
             )
         }
     ).flow
@@ -606,11 +522,10 @@ class ConversationManager(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A composable, immutable filter descriptor for conversation queries.
+ * Immutable, composable filter descriptor for conversation queries.
  *
- * Each field is optional. Only non-null fields are applied to the Firestore
- * query, so any combination of constraints is valid. Combining multiple fields
- * on the same query may require a composite Firestore index.
+ * Only non-null fields are applied to the Firestore query. Combining multiple
+ * inequality or ordering constraints may require a composite Firestore index.
  *
  * @param type          Filters by [ParticipantType].
  * @param creatorId     Filters by the creator's Firebase UID.
@@ -618,9 +533,9 @@ class ConversationManager(
  * @param createdAfter  Includes only conversations created after this [Timestamp].
  * @param createdBefore Includes only conversations created before this [Timestamp].
  * @param updatedAfter  Includes only conversations updated after this [Timestamp].
- * @param sortBy        The field name to sort results by; defaults to "updated_at".
+ * @param sortBy        Firestore field name to sort by; defaults to `updatedAt`.
  * @param sortOrder     Sort direction; defaults to [Query.Direction.DESCENDING].
- * @param limit         Caps the result set to the given number of documents.
+ * @param limit         Caps the result set to this many documents.
  */
 data class ConversationFilter(
     val type: ParticipantType? = null,
@@ -629,33 +544,32 @@ data class ConversationFilter(
     val createdAfter: Timestamp? = null,
     val createdBefore: Timestamp? = null,
     val updatedAfter: Timestamp? = null,
-    val sortBy: String = "updated_at",
+    val sortBy: String = "updatedAt",
     val sortOrder: Query.Direction = Query.Direction.DESCENDING,
     val limit: Long? = null
 ) {
-
     companion object {
-        /** All personal conversations, most recently updated first. */
-        val PERSONAL = ConversationFilter(type = ParticipantType.PERSONAL)
+        private const val FIELD_TYPE       = "type"
+        private const val FIELD_CREATOR_ID = "creatorId"
+        private const val FIELD_TRANSLATED = "translated"
+        private const val FIELD_CREATED_AT = "createdAt"
+        private const val FIELD_UPDATED_AT = "updatedAt"
 
-        /** All group conversations, most recently updated first. */
-        val GROUP = ConversationFilter(type = ParticipantType.GROUP)
+        val PERSONAL = ConversationFilter(type = ParticipantType.PERSONAL)
+        val GROUP    = ConversationFilter(type = ParticipantType.GROUP)
     }
 
+    /** Applies all non-null constraints to [query] and returns the result. */
     fun applyTo(query: Query): Query {
         var q = query
-
-        type?.let          { q = q.whereEqualTo("type", it.value) }
-        creatorId?.let     { q = q.whereEqualTo("creator_id", it) }
-        translated?.let    { q = q.whereEqualTo("translated", it) }
-        createdAfter?.let  { q = q.whereGreaterThan("created_at", it) }
-        createdBefore?.let { q = q.whereLessThan("created_at", it) }
-        updatedAfter?.let  { q = q.whereGreaterThan("updated_at", it) }
-
+        type?.let          { q = q.whereEqualTo(FIELD_TYPE, it.value) }
+        creatorId?.let     { q = q.whereEqualTo(FIELD_CREATOR_ID, it) }
+        translated?.let    { q = q.whereEqualTo(FIELD_TRANSLATED, it) }
+        createdAfter?.let  { q = q.whereGreaterThan(FIELD_CREATED_AT, it) }
+        createdBefore?.let { q = q.whereLessThan(FIELD_CREATED_AT, it) }
+        updatedAfter?.let  { q = q.whereGreaterThan(FIELD_UPDATED_AT, it) }
         q = q.orderBy(sortBy, sortOrder)
-
         limit?.let { q = q.limit(it) }
-
         return q
     }
 }
@@ -665,13 +579,13 @@ data class ConversationFilter(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A Firestore-backed [PagingSource] for [Conversation] documents.
+ * Firestore-backed [PagingSource] for [Conversation] documents.
  *
  * Uses cursor-based pagination via [DocumentSnapshot.startAfter] to avoid
  * re-reading previously loaded pages. Only forward pagination is supported;
- * refreshes always restart from the first page.
+ * a refresh always restarts from the first page.
  *
- * @param query The base Firestore [Query] — must include a [Query.limit] clause.
+ * @param query Base Firestore [Query]; must include a [Query.limit] clause.
  */
 class ConversationPagingSource(
     private val query: Query

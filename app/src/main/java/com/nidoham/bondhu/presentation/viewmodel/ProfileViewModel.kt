@@ -26,9 +26,9 @@ class ProfileViewModel @Inject constructor(
     private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // State
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
 
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
@@ -39,9 +39,9 @@ class ProfileViewModel @Inject constructor(
     private var currentProfileId: String? = null
     private var presenceJob: Job? = null
 
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // Public API
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun loadProfile(profileUserId: String?) {
         val resolvedId = profileUserId?.takeIf { it.isNotBlank() }
@@ -69,11 +69,8 @@ class ProfileViewModel @Inject constructor(
             _uiState.update { it.copy(isFollowLoading = true) }
 
             runCatching {
-                if (wasFollowing) {
-                    userRepository.unfollowUser(currentId, targetId)
-                } else {
-                    userRepository.followUser(currentId, targetId)
-                }
+                if (wasFollowing) userRepository.unfollowUser(currentId, targetId)
+                else              userRepository.followUser(currentId, targetId)
             }.fold(
                 onSuccess = {
                     val nowFollowing = !wasFollowing
@@ -98,13 +95,19 @@ class ProfileViewModel @Inject constructor(
     }
 
     /**
-     * Finds or creates a private conversation between the signed-in user and
+     * Finds or creates a personal conversation between the signed-in user and
      * [targetUserId], then delivers the conversation ID via [onConversationReady].
      *
-     * An existing shared conversation is located by intersecting the joined-ID
-     * sets of both users via [MessageRepository.fetchJoinedIds], which returns
-     * Result<List<String>>. UserRepository calls return plain types and are
-     * accessed directly without Result unwrapping.
+     * The lookup delegates to [MessageRepository.fetchSharedParentId], which
+     * queries the participant sub-collection for the first parentId where both
+     * users hold a [ParticipantType.PERSONAL] record. This replaces the previous
+     * two-sided [fetchJoinedIds] intersection, reducing the operation to a single
+     * collection group query followed by at most one document read per candidate.
+     *
+     * If no shared conversation exists, a new one is created and both participant
+     * records are written atomically before the ID is returned, ensuring that
+     * subsequent calls to [fetchSharedParentId] will always locate the existing
+     * conversation rather than creating a duplicate.
      */
     fun startConversation(targetUserId: String, onConversationReady: (String) -> Unit) {
         if (_uiState.value.isMessageLoading) return
@@ -116,31 +119,17 @@ class ProfileViewModel @Inject constructor(
                 val currentUserId = firebaseAuth.currentUser?.uid
                     ?: throw IllegalStateException("Not signed in.")
 
-                // Intersect the joined-ID sets of both users. This only works reliably
-                // if both users have participant records — which the creation block below
-                // now guarantees by writing both atomically.
-                val currentJoinedIds = messageRepository
-                    .fetchJoinedIds(currentUserId, ParticipantType.PERSONAL)
+                // Delegate shared-parentId resolution to the repository layer.
+                // fetchSharedParentId queries the participant sub-collection for the
+                // first parentId where both users have a PERSONAL participant record,
+                // keeping set-intersection logic out of the ViewModel entirely.
+                val existingId = messageRepository
+                    .fetchSharedParentId(currentUserId, targetUserId)
                     .getOrNull()
-                    .orEmpty()
-                    .toSet()
 
-                val targetJoinedIds = messageRepository
-                    .fetchJoinedIds(targetUserId, ParticipantType.PERSONAL)
-                    .getOrNull()
-                    .orEmpty()
-                    .toSet()
-
-                val existingConversationId = currentJoinedIds
-                    .intersect(targetJoinedIds)
-                    .firstOrNull()
-
-                if (!existingConversationId.isNullOrBlank()) {
-                    // A shared conversation already exists — reuse it.
-                    existingConversationId
+                if (!existingId.isNullOrBlank()) {
+                    existingId
                 } else {
-                    // No shared conversation found. Resolve the target user's display
-                    // name for the conversation title, then create the document.
                     val targetUser = userRepository.fetchUserById(targetUserId)
                         ?: throw NoSuchElementException("Target user not found.")
 
@@ -148,6 +137,8 @@ class ProfileViewModel @Inject constructor(
                         ?: targetUser.username.takeIf { it.isNotBlank() }
                         ?: "Chat"
 
+                    // createConversation atomically writes the conversation document
+                    // and the current user's ADMIN participant record in a single batch.
                     val conversationId = messageRepository.createConversation(
                         Conversation(
                             creatorId = currentUserId,
@@ -156,19 +147,17 @@ class ProfileViewModel @Inject constructor(
                         )
                     ).getOrThrow()
 
-                    // CRITICAL FIX: createConversation only writes the creator's participant
-                    // record. Without also writing the target user's record here, fetchJoinedIds
-                    // for the target will never include this conversation, so the intersection
-                    // above will always return empty and a new conversation will be created on
-                    // every subsequent call.
+                    // Write the target user's participant record so that future
+                    // fetchSharedParentId calls locate this conversation from either
+                    // user's perspective, preventing duplicate conversations.
                     messageRepository.addParticipant(
                         parentId    = conversationId,
                         uid         = targetUserId,
                         participant = Participant(
-                            uid = targetUserId,
+                            uid      = targetUserId,
                             parentId = conversationId,
-                            role = ParticipantRole.MEMBER.value,
-                            type = ParticipantType.PERSONAL.value
+                            role     = ParticipantRole.MEMBER.value,
+                            type     = ParticipantType.PERSONAL.value
                         )
                     ).getOrThrow()
 
@@ -190,33 +179,30 @@ class ProfileViewModel @Inject constructor(
 
     fun clearError() = _uiState.update { it.copy(error = null) }
 
-    // ─────────────────────────────────────────────────────────────
-    // Private helpers
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private Helpers
+    // ─────────────────────────────────────────────────────────────────────────
 
     private fun fetchProfile(profileUserId: String?) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            runCatching {
-                val currentUid = firebaseAuth.currentUser?.uid
-                val isOwner    = profileUserId == null || profileUserId == currentUid
+            val currentUid = firebaseAuth.currentUser?.uid
+            val isOwner    = profileUserId == null || profileUserId == currentUid
 
-                // UserRepository methods return plain User?, not Result<User?>.
-                // .getOrNull() must not be called here.
-                val user = (if (isOwner && currentUid != null) {
-                    userRepository.fetchCurrentUser(currentUid)
-                } else if (profileUserId != null) {
-                    userRepository.fetchUserById(profileUserId)
-                } else null) ?: throw NoSuchElementException("User not found.")
+            runCatching {
+                val user = when {
+                    isOwner && currentUid != null -> userRepository.fetchCurrentUser(currentUid)
+                    profileUserId != null         -> userRepository.fetchUserById(profileUserId)
+                    else                          -> null
+                } ?: throw NoSuchElementException("User not found.")
 
                 val isFollowing = if (!isOwner && currentUid != null) {
                     userRepository.isFollowing(currentUid, user.uid)
                 } else false
 
-                Triple(user, isOwner, isFollowing)
-
-            }.onSuccess { (user, isOwner, isFollowing) ->
+                user to isFollowing
+            }.onSuccess { (user, isFollowing) ->
                 observeOnlineStatus(user.uid)
                 _uiState.update { state ->
                     state.copy(
@@ -247,5 +233,11 @@ class ProfileViewModel @Inject constructor(
                 _isTargetOnline.value = status.online
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        presenceJob?.cancel()
+        presenceJob = null
     }
 }

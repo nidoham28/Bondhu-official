@@ -64,7 +64,7 @@ class MessageViewModel @Inject constructor(
                         list.map { conversation: Conversation ->
                             val peerId = runCatching {
                                 messageRepository.fetchParticipantsFiltered(
-                                    parentId = conversation.id,           // fixed: was id =
+                                    parentId = conversation.parentId,           // fixed: was id =
                                     filter   = ParticipantFilter(
                                         type = ParticipantType.PERSONAL   // fixed: no type was set
                                     )

@@ -35,63 +35,73 @@ import java.util.Locale
 fun MessageScreen(
     viewModel: MessageViewModel = hiltViewModel()
 ) {
-    // fixed: conversations is Flow<List<ConversationWithUser>>, not Flow<PagingData<...>>.
-    //        collectAsLazyPagingItems() and all LoadState APIs have been replaced with
-    //        collectAsState(), which is the correct collector for a plain list flow.
+
     val conversations: List<ConversationWithUser> by viewModel.conversations
         .collectAsState(initial = emptyList())
 
     val currentUserId = viewModel.currentUserId
-    val context       = LocalContext.current
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
+
         TopBar(
-            title               = stringResource(R.string.app_name),
+            title = stringResource(R.string.app_name),
             onNotificationClick = {},
-            onAddClick          = {},
+            onAddClick = {},
         )
 
         when {
+
             conversations.isEmpty() -> {
+
                 Box(
-                    modifier          = Modifier.fillMaxSize(),
-                    contentAlignment  = Alignment.Center
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text  = "No conversations yet",
+                        text = "No conversations yet",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
             }
 
             else -> {
+
                 LazyColumn(
-                    modifier       = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
-                    // fixed: replaced paging items(count, key) with standard items(list, key).
+
                     items(
                         items = conversations,
-                        key   = { it.conversation.id }
+                        key = { it.conversation.parentId }
                     ) { item ->
+
                         ConversationItem(
-                            item          = item,
+                            item = item,
                             currentUserId = currentUserId,
-                            onClick       = { conversationId ->
+                            onClick = { conversationId ->
                                 if (conversationId.isNotBlank()) {
                                     NavigationHelper.navigateToChat(context, conversationId)
                                 }
                             }
                         )
+
                     }
+
                 }
+
             }
+
         }
+
     }
+
 }
 
 @Composable
@@ -100,41 +110,47 @@ private fun ConversationItem(
     currentUserId: String,
     onClick: (conversationId: String) -> Unit
 ) {
+
     val conversation = item.conversation
-    val peerUser     = item.peerUser
+    val peerUser = item.peerUser
 
     val isGroup = conversation.type == ParticipantType.GROUP.value
 
     val title = when {
-        isGroup          -> conversation.title.orEmpty().ifEmpty { "Unnamed Group" }
+        isGroup -> conversation.title.orEmpty().ifEmpty { "Unnamed Group" }
         peerUser != null -> peerUser.displayName.ifEmpty {
             peerUser.username.ifEmpty { "Unknown" }
         }
-        else             -> "Loading..."
+        else -> "Loading..."
     }
 
     val avatarUrl = peerUser?.photoUrl ?: ""
 
-    val previewText = conversation.lastMessage
-        ?.takeIf { it.isNotBlank() }
-        ?: "No messages yet"
+    val previewText = conversation.lastMessage?.let { msg ->
+        if (msg.senderId == currentUserId) {
+            "You: ${msg.content}"
+        } else {
+            msg.content
+        }
+    } ?: "No messages yet"
 
-    val timeString = conversation.updatedAt?.toDate()?.let { date ->
+    val timeString = conversation.lastMessage?.timestamp?.toDate()?.let { date ->
         SimpleDateFormat("hh:mm a", Locale.getDefault()).format(date)
     } ?: ""
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick(conversation.id) }
+            .clickable { onClick(conversation.parentId) }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+
         AsyncImage(
-            model              = avatarUrl.takeIf { it.isNotEmpty() } ?: R.drawable.ic_launcher,
+            model = avatarUrl.takeIf { it.isNotEmpty() } ?: R.drawable.ic_launcher,
             contentDescription = "Avatar",
-            contentScale       = ContentScale.Crop,
-            modifier           = Modifier
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
                 .size(52.dp)
                 .clip(CircleShape)
                 .background(Color.LightGray)
@@ -142,40 +158,48 @@ private fun ConversationItem(
 
         Spacer(modifier = Modifier.width(16.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+
             Row(
-                modifier              = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
+
                 Text(
-                    text       = title,
-                    style      = MaterialTheme.typography.titleMedium,
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color      = MaterialTheme.colorScheme.onBackground,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis,
-                    modifier   = Modifier.weight(1f)
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Text(
-                    text  = timeString,
+                    text = timeString,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text     = previewText,
-                style    = MaterialTheme.typography.bodyMedium,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = previewText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+
         }
+
     }
+
 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.nidoham.server.domain.message.Message
+import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
 import com.nidoham.server.util.MessageStatus
@@ -46,7 +47,6 @@ data class ChatUiState(
 class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
-    // FIX: FirebaseAuth replaces the removed userRepository.getCurrentUserId().
     private val firebaseAuth: FirebaseAuth
 ) : ViewModel() {
 
@@ -60,9 +60,6 @@ class ChatViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    // FIX: getCurrentUserId() did not exist on UserRepository.
-    //      Read uid directly from FirebaseAuth at call time so it stays fresh
-    //      across auth state changes without a dedicated coroutine.
     val currentUserId: String
         get() = firebaseAuth.currentUser?.uid ?: ""
 
@@ -80,24 +77,26 @@ class ChatViewModel @Inject constructor(
     private var selfTypingStopJob: Job? = null
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 1 — Entry point
+    // Entry Point
     // ─────────────────────────────────────────────────────────────────────────
 
     fun initChat(conversationId: String) {
         if (currentConversationId == conversationId) return
-        stopSelfTyping()
+
+        // Cancel all peer-level jobs from any previous session before the
+        // conversation ID changes, so stale streams do not bleed into the
+        // new session.
+        cancelPeerJobs()
+        stopSelfTypingInternal()
+
         currentConversationId = conversationId
+        currentPeerId         = null
 
         chatObservationJob?.cancel()
         chatObservationJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            // Stream 1: resolve the peer UID via the participants subcollection.
-            //
-            // FIX: ParticipantManager was previously injected directly into the
-            //      ViewModel. All participant access is now routed through
-            //      MessageRepository, which already owns ParticipantManager
-            //      internally and exposes observeParticipants() as a stable API.
+            // Stream 1: resolve the peer UID from the participants sub-collection.
             launch {
                 messageRepository.observeParticipants(conversationId)
                     .catch { e ->
@@ -116,69 +115,38 @@ class ChatViewModel @Inject constructor(
                         if (peerId == currentPeerId) return@collect
                         currentPeerId = peerId
 
-                        peerProfileJob?.cancel()
-                        peerProfileJob = launch { loadPeerProfile(peerId) }
-
-                        peerPresenceJob?.cancel()
+                        cancelPeerJobs()
+                        peerProfileJob  = launch { loadPeerProfile(peerId) }
                         peerPresenceJob = launch { observePeerPresence(peerId) }
-
-                        peerTypingJob?.cancel()
-                        peerTypingJob = launch { observePeerTyping(conversationId, peerId) }
+                        peerTypingJob   = launch { observePeerTyping(conversationId, peerId) }
                     }
             }
 
-            // Stream 2: live conversation metadata (subscriber_count, last_message, etc.)
+            // Stream 2: live conversation metadata — reserved for future use.
             launch {
                 messageRepository.observeConversation(conversationId)
-                    .collect { _ ->
-                        // Reserved for future metadata-driven UI updates.
-                    }
+                    .collect { /* metadata-driven UI updates go here */ }
             }
 
             // Stream 3: live message list.
-            //
-            // FIX: observeLiveMessages() did not exist on MessageRepository.
-            //      Replaced with observeMessages(), which is the correct API.
             launch {
                 messageRepository.observeMessages(conversationId)
-                    .catch { _uiState.update { state -> state.copy(isLoading = false, isSendError = true) } }
+                    .catch { e ->
+                        Timber.e(e, "ChatViewModel: message stream error for $conversationId")
+                        _uiState.update { it.copy(isLoading = false, isSendError = true) }
+                    }
                     .collect { incoming ->
                         _uiState.update { it.copy(messages = incoming.reversed(), isLoading = false) }
-
-                        // FIX: Message.readBy did not exist on the Message domain model.
-                        //      Unread detection is now based on message.status, which
-                        //      is the authoritative read/delivery field on Message.
-                        //
-                        // FIX: markAllDelivered() did not exist on MessageRepository.
-                        //      Replaced with updateMessageStatusBatch(), targeting only
-                        //      messages from the peer that have not yet been delivered.
-                        val undeliveredIds = incoming
-                            .filter { msg ->
-                                msg.senderId != currentUserId &&
-                                        msg.status == MessageStatus.PENDING.name.lowercase()
-                            }
-                            .map { it.messageId }
-
-                        if (undeliveredIds.isNotEmpty()) {
-                            messageRepository.updateMessageStatusBatch(
-                                conversationId = conversationId,
-                                messageIds     = undeliveredIds,
-                                status         = MessageStatus.DELIVERED
-                            )
-                        }
+                        markUndeliveredMessages(conversationId, incoming)
                     }
             }
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 2 — Peer profile
+    // Peer Profile
     // ─────────────────────────────────────────────────────────────────────────
 
-    // FIX: observeCurrentUser() did not exist on UserRepository.
-    //      Replaced with a one-shot fetchUserById() call. Profile data for a
-    //      peer is static within the lifetime of a chat session, so a live
-    //      stream is not required here.
     private suspend fun loadPeerProfile(peerId: String) {
         val user = userRepository.fetchUserById(peerId) ?: return
         _uiState.update { state ->
@@ -192,25 +160,19 @@ class ChatViewModel @Inject constructor(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 3 — Peer presence
+    // Peer Presence
     // ─────────────────────────────────────────────────────────────────────────
 
-    // FIX: observeUserPresence() did not exist on UserRepository.
-    //      Replaced with observeUserStatus(), which is the correct API.
     private suspend fun observePeerPresence(peerId: String) {
         userRepository.observeUserStatus(peerId).collect { status ->
             val now               = System.currentTimeMillis()
             val lastSeenMs        = status.lastSeen ?: 0L
-            val heartbeatAge      = now - lastSeenMs
-            val effectivelyOnline = status.online && heartbeatAge < onlineStalenessMs
-
-            if (!effectivelyOnline) {
-                _uiState.update { it.copy(isPeerTyping = false) }
-            }
+            val effectivelyOnline = status.online && (now - lastSeenMs) < onlineStalenessMs
 
             _uiState.update { state ->
                 state.copy(
                     isPeerOnline = effectivelyOnline,
+                    isPeerTyping = if (!effectivelyOnline) false else state.isPeerTyping,
                     lastSeen     = if (effectivelyOnline) "online" else formatLastSeen(lastSeenMs)
                 )
             }
@@ -218,46 +180,44 @@ class ChatViewModel @Inject constructor(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 4 — Peer typing
+    // Peer Typing
     // ─────────────────────────────────────────────────────────────────────────
 
-    // FIX: The previous implementation used raw Firebase RTDB calls (DatabaseReference,
-    //      ValueEventListener, callbackFlow), duplicating logic that already exists
-    //      inside TypingManager, which is owned and exposed by MessageRepository.
-    //      The ViewModel should never reach past the repository layer into RTDB directly.
-    //
-    //      All typing observation is now delegated to messageRepository.observeTyping(),
-    //      and all typing writes are delegated to messageRepository.setTyping() /
-    //      clearTyping(). This also eliminates:
-    //        - FirebaseDatabase injection
-    //        - TypingPayload data class
-    //        - selfTypingRef DatabaseReference cache
-    //        - registerSelfTypingDisconnectHook()
-    //        - pushSelfTyping()
-    //        - tearDownTyping()
-    //        - the typing watchdog job
-    //        - peerTypingFlow() callbackFlow wrapper
-    //      onDisconnect() cleanup is handled inside TypingManager.
     private suspend fun observePeerTyping(conversationId: String, peerId: String) {
         messageRepository.observeTyping(conversationId)
             .catch { _uiState.update { it.copy(isPeerTyping = false) } }
             .collect { typingState ->
-                val isPeerTyping = peerId in typingState.typingUserIds
-                _uiState.update { it.copy(isPeerTyping = isPeerTyping) }
+                _uiState.update { it.copy(isPeerTyping = peerId in typingState.typingUserIds) }
             }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 5 — Last-seen formatter
+    // Undelivered Message Promotion
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun formatLastSeen(lastSeenMs: Long): String {
-        if (lastSeenMs == 0L) return ""
-        return lastSeenMs.toTimeAgo()
+    private fun markUndeliveredMessages(conversationId: String, messages: List<Message>) {
+        // Only promote messages from the peer that are still in PENDING status.
+        // Use MessageStatus.PENDING.value to match the serialized Firestore field value.
+        val undeliveredIds = messages
+            .filter { msg ->
+                msg.senderId != currentUserId &&
+                        msg.status   == MessageStatus.PENDING.value
+            }
+            .map { it.messageId }
+
+        if (undeliveredIds.isEmpty()) return
+
+        viewModelScope.launch {
+            messageRepository.updateMessageStatusBatch(
+                conversationId = conversationId,
+                messageIds     = undeliveredIds,
+                status         = MessageStatus.DELIVERED
+            )
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 6 — UI events
+    // UI Events
     // ─────────────────────────────────────────────────────────────────────────
 
     fun onInputChanged(text: String) {
@@ -265,16 +225,14 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(inputText = text, isSendError = false) }
 
         if (text.isNotBlank()) {
-            viewModelScope.launch {
-                messageRepository.setTyping(conversationId, true)
-            }
+            viewModelScope.launch { messageRepository.setTyping(conversationId, true) }
             selfTypingStopJob?.cancel()
             selfTypingStopJob = viewModelScope.launch {
                 delay(selfTypingIdleStopMs)
                 messageRepository.setTyping(conversationId, false)
             }
         } else {
-            stopSelfTyping()
+            stopSelfTypingInternal()
         }
     }
 
@@ -284,40 +242,87 @@ class ChatViewModel @Inject constructor(
         if (text.isEmpty() || conversationId == null) return
 
         _uiState.update { it.copy(inputText = "", isSendError = false) }
-        stopSelfTyping()
+        stopSelfTypingInternal()
 
         viewModelScope.launch {
-            // FIX: sendMessage(conversationId, senderId, content, type) did not match
-            //      the MessageRepository API. The correct overload accepts a Message object.
             val message = Message(
-                conversationId = conversationId,
-                senderId       = currentUserId,
-                content        = text,
-                type           = MessageType.TEXT.name.lowercase()
+                parentId = conversationId,
+                senderId = currentUserId,
+                content  = text,
+                type     = MessageType.TEXT.value
             )
-            val result = messageRepository.sendMessage(conversationId, message)
-            if (result.isFailure) {
-                _uiState.update { it.copy(inputText = text, isSendError = true) }
-            }
+
+            messageRepository.sendMessage(conversationId, message)
+                .onSuccess { messageId ->
+                    // Build the preview from the values we already have in scope.
+                    // timestamp is null here because @ServerTimestamp is resolved
+                    // by Firestore after the write — the preview stores whatever
+                    // the server assigns, so null is the correct client-side value
+                    // at this point and will be overwritten on the next read.
+                    val preview = MessagePreview(
+                        messageId = messageId,
+                        parentId = conversationId,
+                        senderId = currentUserId,
+                        content = text,
+                        type = MessageType.TEXT.value
+                    )
+
+                    // These two calls can fail independently without affecting the
+                    // already-committed message. Log failures but do not surface
+                    // them to the user — the message itself was sent successfully.
+                    messageRepository.updateLastMessage(conversationId, preview)
+                        .onFailure { e ->
+                            Timber.w(e, "ChatViewModel: failed to update lastMessage for $conversationId")
+                        }
+
+                    messageRepository.incrementMessageCount(conversationId)
+                        .onFailure { e ->
+                            Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
+                        }
+                }
+                .onFailure {
+                    _uiState.update { it.copy(inputText = text, isSendError = true) }
+                }
         }
     }
 
     fun isMine(message: Message): Boolean =
         message.senderId == currentUserId
 
-    // FIX: isReadByPeer() previously checked currentPeerId in message.readBy, but
-    //      readBy does not exist on Message. Read state is tracked via message.status.
-    //      A message sent by the current user is considered read by the peer when
-    //      its status has been promoted to READ.
+    /**
+     * Returns true if the peer has promoted this message's status to [MessageStatus.READ].
+     * Relies on [MessageStatus.READ.value] to match the serialized Firestore field value
+     * rather than the enum constant name.
+     */
     fun isReadByPeer(message: Message): Boolean =
         message.senderId == currentUserId &&
-                message.status == MessageStatus.READ.name.lowercase()
+                message.status   == MessageStatus.READ.value   // fixed: was .name.lowercase()
+
+    fun clearError() = _uiState.update { it.copy(isSendError = false) }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 7 — Internal helpers
+    // Internal Helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun stopSelfTyping() {
+    private fun formatLastSeen(lastSeenMs: Long): String =
+        if (lastSeenMs == 0L) "" else lastSeenMs.toTimeAgo()
+
+    private fun cancelPeerJobs() {
+        peerProfileJob?.cancel()
+        peerPresenceJob?.cancel()
+        peerTypingJob?.cancel()
+        peerProfileJob  = null
+        peerPresenceJob = null
+        peerTypingJob   = null
+    }
+
+    /**
+     * Cancels the idle-stop timer and sends an explicit stop-typing signal.
+     * Must not call [viewModelScope.launch] after [onCleared] has invoked
+     * [super.onCleared], so the coroutine is only launched when [viewModelScope]
+     * is still active.
+     */
+    private fun stopSelfTypingInternal() {
         selfTypingStopJob?.cancel()
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
@@ -327,15 +332,16 @@ class ChatViewModel @Inject constructor(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SECTION 8 — Cleanup
+    // Cleanup
     // ─────────────────────────────────────────────────────────────────────────
 
     override fun onCleared() {
-        super.onCleared()
-        stopSelfTyping()
+        // stopSelfTypingInternal() must be called before super.onCleared() because
+        // super.onCleared() cancels viewModelScope, after which the coroutine
+        // launched inside stopSelfTypingInternal() would silently no-op.
+        stopSelfTypingInternal()
+        cancelPeerJobs()
         chatObservationJob?.cancel()
-        peerProfileJob?.cancel()
-        peerPresenceJob?.cancel()
-        peerTypingJob?.cancel()
+        super.onCleared()
     }
 }

@@ -149,9 +149,10 @@ fun MainScreen(
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
-        // FIX: padding was declared as `_ ` (ignored). Apply it so Scaffold content
+        // FIX: padding was
+        // declared as `_ ` (ignored). Apply it so Scaffold content
         //      is not obscured by the bottom bar.
-    ) { innerPadding ->
+    ) { _ ->
         AnimatedContent(
             targetState = selectedTab,
             transitionSpec = {
