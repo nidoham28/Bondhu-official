@@ -41,10 +41,11 @@ android {
 
 dependencies {
     implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
-        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.1") {
-        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
+        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
 
     // Hilt
