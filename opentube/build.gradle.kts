@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace  = "com.nidoham.server"
+    namespace  = "com.nidoham.opentube"
     compileSdk = 36
 
     defaultConfig {
@@ -19,7 +19,7 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -40,26 +40,22 @@ android {
 }
 
 dependencies {
-    // Firebase
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.auth)
-    implementation(libs.firebase.firestore)
-    implementation(libs.firebase.database)
+    implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
+        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+    }
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.1") {
+        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+    }
 
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    // Paging 3 — runtime only; paging-compose belongs in the app module
-    implementation(libs.androidx.paging.runtime)
+    // Networking
+    implementation(libs.okhttp)
 
-    // Lifecycle — runtime and process only; Compose lifecycle deps belong in the app module
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.lifecycle.process)
-
-    // Coroutines
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.coroutines.play.services)
+    // Persistence
+    implementation(libs.datastore.preferences)
 
     // Logging
     implementation(libs.timber)

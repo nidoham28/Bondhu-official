@@ -1,25 +1,27 @@
 [versions]
 agp = "9.1.0"
+extractor = "ddf2d54d3d"
 kotlin = "2.3.10"
 ksp = "2.3.4"
-coreKtx = "1.17.0"
+coreKtx = "1.18.0"
 lifecycleKtx = "2.10.0"
-activityCompose = "1.12.4"
-composeBom = "2026.02.01"
+activityCompose = "1.13.0"
+composeBom = "2026.03.00"
 appcompat = "1.7.1"
 material = "1.13.0"
 firebaseBom = "34.10.0"
 coroutines = "1.10.2"
 navigationCompose = "2.9.7"
 coil = "2.7.0"
-pagingRuntime = "3.4.1"
+pagingRuntime = "3.4.2"
+protoGoogleCommonProtos = "2.66.0"
 timber = "5.0.1"
 hilt = "2.59.2"
 hiltNavigationCompose = "1.3.0"
 room = "2.8.4"
-datastore = "1.2.0"
+datastore = "1.2.1"
 accompanist = "0.36.0"
-runtimeLivedata = "1.10.4"
+runtimeLivedata = "1.10.5"
 okhttp = "5.3.2"
 gson = "2.13.2"
 retrofit = "3.0.0"
@@ -27,11 +29,13 @@ retrofit = "3.0.0"
 credentials = "1.5.0"
 googleid   = "1.2.0"
 
+newpipeextractor = "v0.25.1"
+
 # Testing
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-activity = "1.12.4"
+activity = "1.13.0"
 exifinterface = "1.4.2"
 
 [libraries]
@@ -40,6 +44,7 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-paging-compose = { module = "androidx.paging:paging-compose", version.ref = "pagingRuntime" }
 androidx-paging-runtime = { module = "androidx.paging:paging-runtime", version.ref = "pagingRuntime" }
+extractor = { module = "com.github.nidoham:Extractor", version.ref = "extractor" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 
 # Lifecycle
@@ -68,8 +73,6 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-database = { group = "com.google.firebase", name = "firebase-database" }
-firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
-firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
@@ -80,7 +83,10 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 
+newpipeextractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newpipeextractor" }
+
 # Room
+proto-google-common-protos = { module = "com.google.api.grpc:proto-google-common-protos", version.ref = "protoGoogleCommonProtos" }
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }

@@ -1,6 +1,7 @@
 package com.nidoham.bondhu
 
 import android.app.Application
+import com.nidoham.extractor.Downloader
 import com.nidoham.server.manager.PresenceManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +36,7 @@ class BondhuApp : Application() {
         // Initialize presence tracking immediately so the init block inside
         // PresenceManager runs as early as possible after Hilt injection.
         presenceManager.initialize()
+        Downloader.init(this)
 
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())

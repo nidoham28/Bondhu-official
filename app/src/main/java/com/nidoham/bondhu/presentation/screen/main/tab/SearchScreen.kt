@@ -1,5 +1,10 @@
 package com.nidoham.bondhu.presentation.screen.main.tab
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -21,6 +27,8 @@ import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,79 +41,150 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
-import com.nidoham.bondhu.R
-import com.nidoham.bondhu.presentation.component.common.TopBar
 import com.nidoham.bondhu.presentation.component.search.SearchResults
+import com.nidoham.bondhu.presentation.screen.search.YoutubeSearchScreen
+import com.nidoham.bondhu.presentation.viewmodel.SearchTab
 import com.nidoham.bondhu.presentation.viewmodel.SearchViewModel
 
 @Composable
 fun SearchScreen(
-    viewModel: SearchViewModel = hiltViewModel(),
-    onUserClick: (String) -> Unit
+    viewModel   : SearchViewModel = hiltViewModel(),
+    onUserClick : (String) -> Unit
 ) {
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val users = viewModel.searchResults.collectAsLazyPagingItems()
+    val searchQuery  by viewModel.searchQuery.collectAsState()
+    val activeTab    by viewModel.searchTab.collectAsState()
+    val youTubeState by viewModel.youTubeState.collectAsState()
+    val people       = viewModel.peopleResults.collectAsLazyPagingItems()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
     ) {
-        TopBar(
-            title = stringResource(R.string.app_name),
-            onNotificationClick = {},
-            onAddClick = {},
-        )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.background)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             SearchPillField(
                 query         = searchQuery,
                 onQueryChange = viewModel::onSearchQueryChange,
-                onSearch      = { users.refresh() },
+                onSearch      = { people.refresh() },
                 modifier      = Modifier.weight(1f)
             )
         }
 
-        SearchResults(
-            users       = users,
-            searchQuery = searchQuery,
-            onUserClick = onUserClick,
-            modifier    = Modifier.fillMaxSize()
-        )
+        Row(
+            modifier              = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SearchTabChip(
+                label    = "People",
+                selected = activeTab == SearchTab.PEOPLE,
+                onClick  = { viewModel.onTabSelected(SearchTab.PEOPLE) }
+            )
+            SearchTabChip(
+                label    = "YouTube",
+                selected = activeTab == SearchTab.YOUTUBE,
+                onClick  = { viewModel.onTabSelected(SearchTab.YOUTUBE) }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        AnimatedContent(
+            targetState    = activeTab,
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
+            label          = "SearchTabContent",
+            modifier       = Modifier.fillMaxSize()
+        ) { tab ->
+            when (tab) {
+                SearchTab.PEOPLE  -> SearchResults(
+                    users       = people,
+                    searchQuery = searchQuery,
+                    onUserClick = onUserClick,
+                    modifier    = Modifier.fillMaxSize()
+                )
+                SearchTab.YOUTUBE -> YoutubeSearchScreen(
+                    state      = youTubeState,
+                    onLoadMore = viewModel::loadMoreYouTube,
+                    onRetry    = viewModel::retryYouTubeSearch,
+                    modifier   = Modifier.fillMaxSize()
+                )
+            }
+        }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tab chip
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SearchTabChip(
+    label    : String,
+    selected : Boolean,
+    onClick  : () -> Unit
+) {
+    FilterChip(
+        selected = selected,
+        onClick  = onClick,
+        label    = {
+            Text(
+                text       = label,
+                style      = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            )
+        },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor  = MaterialTheme.colorScheme.primary,
+            selectedLabelColor      = MaterialTheme.colorScheme.onPrimary,
+            containerColor          = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            labelColor              = MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled             = true,
+            selected            = selected,
+            borderColor         = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+            selectedBorderColor = MaterialTheme.colorScheme.primary
+        ),
+        shape = RoundedCornerShape(10.dp)
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Search pill field
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Composable
 private fun SearchPillField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onSearch: () -> Unit,
-    modifier: Modifier = Modifier
+    query         : String,
+    onQueryChange : (String) -> Unit,
+    onSearch      : () -> Unit,
+    modifier      : Modifier = Modifier
 ) {
     val cs        = MaterialTheme.colorScheme
     val pillBg    = cs.surfaceVariant.copy(alpha = 0.55f)
     val hintColor = cs.onSurfaceVariant.copy(alpha = 0.5f)
+    val shape     = RoundedCornerShape(14.dp)
 
     BasicTextField(
-        value         = query,
-        onValueChange = onQueryChange,
-        singleLine    = true,
-        textStyle     = TextStyle(
+        value           = query,
+        onValueChange   = onQueryChange,
+        singleLine      = true,
+        textStyle       = TextStyle(
             color      = cs.onSurface,
             fontSize   = 15.sp,
             fontWeight = FontWeight.Normal
@@ -117,11 +196,11 @@ private fun SearchPillField(
         decorationBox   = { innerTextField ->
             Row(
                 modifier = Modifier
-                    .height(45.dp)
-                    .clip(RoundedCornerShape(50))
+                    .height(40.dp)
+                    .clip(shape)
                     .background(pillBg)
                     .padding(horizontal = 12.dp),
-                verticalAlignment   = Alignment.CenterVertically,
+                verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(
@@ -130,7 +209,6 @@ private fun SearchPillField(
                     tint               = if (query.isNotEmpty()) cs.primary else hintColor,
                     modifier           = Modifier.size(22.dp)
                 )
-
                 Box(modifier = Modifier.weight(1f)) {
                     if (query.isEmpty()) {
                         Text(
@@ -141,7 +219,6 @@ private fun SearchPillField(
                     }
                     innerTextField()
                 }
-
                 if (query.isNotEmpty()) {
                     IconButton(
                         onClick  = { onQueryChange("") },
@@ -160,23 +237,19 @@ private fun SearchPillField(
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared state composables
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Composable
 fun IdleState() {
-    Column(
-        modifier              = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment   = Alignment.CenterHorizontally,
-        verticalArrangement   = Arrangement.Center
-    ) {
-        // Intentionally empty
-    }
+    Box(modifier = Modifier.fillMaxSize())
 }
 
 @Composable
 fun LoadingState() {
     Box(
-        modifier        = Modifier.fillMaxSize(),
+        modifier         = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator(
@@ -205,10 +278,11 @@ fun EmptyState(query: String) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text      = "No results for \"$query\"",
-            style     = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color     = cs.onBackground,
-            textAlign = TextAlign.Center
+            text       = "No results for \"$query\"",
+            style      = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color      = cs.onBackground,
+            textAlign  = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
@@ -238,9 +312,10 @@ fun ErrorState(message: String, onRetry: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text  = "Something went wrong",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = cs.onBackground
+            text       = "Something went wrong",
+            style      = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color      = cs.onBackground
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(

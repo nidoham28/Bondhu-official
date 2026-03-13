@@ -7,15 +7,15 @@ plugins {
 }
 
 android {
-    namespace = "com.nidoham.bondhu"
+    namespace  = "com.nidoham.bondhu"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "com.nidoham.bondhu"
-        minSdk = 26
-        targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2-alpha"
+        minSdk        = 26
+        targetSdk     = 36
+        versionCode   = 3
+        versionName   = "1.0.2-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -23,10 +23,10 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            isDebuggable = true
+            isDebuggable    = true
         }
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled   = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -41,8 +41,14 @@ android {
     }
 
     buildFeatures {
-        compose = true
+        compose     = true
         buildConfig = true
+    }
+
+    packaging {
+        resources {
+            excludes += "/google/protobuf/**"
+        }
     }
 }
 
@@ -77,7 +83,7 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.database)
 
-    // Google Credential Manager (replaces deprecated GoogleSignInClient)
+    // Google Credential Manager
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)
     implementation(libs.googleid)
@@ -88,10 +94,12 @@ dependencies {
 
     // Hilt
     implementation(libs.hilt.android)
-    implementation(libs.androidx.activity)
-    implementation(libs.androidx.exifinterface)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
+
+    // Paging 3
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
 
     // DataStore
     implementation(libs.datastore.preferences)
@@ -103,20 +111,18 @@ dependencies {
     implementation(libs.retrofit.converter.gson)
     implementation(libs.gson)
 
-    // Coil
+    // Image loading
     implementation(libs.coil.compose)
 
-    // Timber
+    // Logging
     implementation(libs.timber)
 
-    // Accompanist Pager
+    // Accompanist
     implementation(libs.accompanist.pager)
     implementation(libs.accompanist.pager.indicators)
 
-    // 📱 PAGING 3 (MUST HAVE)
-    implementation(libs.androidx.paging.runtime)
-    implementation(libs.androidx.paging.compose)
-
+    // Utilities
+    implementation(libs.androidx.activity)
     implementation(libs.androidx.exifinterface)
 
     // Testing
@@ -128,5 +134,15 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
+    // NewPipe Extractor
+    implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
+        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+    }
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.1") {
+        exclude(group = "com.google.api.grpc", module = "proto-google-common-protos")
+    }
+
+    // Local modules
     implementation(project(":server"))
+    implementation(project(":opentube"))
 }
