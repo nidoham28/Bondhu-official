@@ -9,8 +9,12 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalConfiguration
 import android.content.res.Configuration
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
-import androidx.core.view.WindowCompat
+import androidx.compose.ui.Modifier
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -81,28 +85,32 @@ class PlayerActivity : BaseActivity() {
                     viewModel.initPlayer(streamUrl, title)
                 }
 
-                PlayerScreen(
-                    uiState            = uiState,
-                    player             = player,
-                    isLandscape        = isLandscape,
-                    onBack             = {
-                        if (isLandscape) {
-                            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        } else {
-                            finish()
-                        }
-                    },
-                    onPlay             = viewModel::play,
-                    onPause            = viewModel::pause,
-                    onSeek             = viewModel::seekTo,
-                    onRetry            = viewModel::retry,
-                    onToggleFullscreen = {
-                        requestedOrientation = if (isLandscape)
-                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        else
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    },
-                )
+                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)){
+                    PlayerScreen(
+                        uiState            = uiState,
+                        player             = player,
+                        isLandscape        = isLandscape,
+                        onBack             = {
+                            if (isLandscape) {
+                                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            } else {
+                                finish()
+                            }
+                        },
+                        onPlay             = viewModel::play,
+                        onPause            = viewModel::pause,
+                        onSeek             = viewModel::seekTo,
+                        onRetry            = viewModel::retry,
+                        onToggleFullscreen = {
+                            requestedOrientation = if (isLandscape) {
+                                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            } else {
+                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            }
+                        },
+                    )
+                }
+
             }
         }
     }
