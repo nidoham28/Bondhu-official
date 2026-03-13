@@ -25,21 +25,24 @@ import javax.inject.Inject
  * ViewModel for [com.nidoham.bondhu.PlayerActivity].
  *
  * Manages the binding lifecycle for [PlayerService] and bridges its state to
- * Compose UI via [StateFlow]s. Using [AndroidViewModel] is intentional here —
+ * Compose UI via [StateFlow]s. [AndroidViewModel] is used intentionally —
  * starting a foreground service and binding to it both require an [Application]
- * context, which must outlive any single activity.
+ * context that must outlive any single activity.
+ *
+ * ## Service binding
+ * [initPlayer] starts the service via [startForegroundService], then binds
+ * using [PlayerService.ACTION_BIND]. That action causes [PlayerService.onBind]
+ * to return a [PlayerService.PlayerBinder] rather than delegating to the
+ * Media3 session path inside [androidx.media3.session.MediaSessionService].
  *
  * ## State bridging
- * Once the [ServiceConnection] delivers a [PlayerService] reference, the ViewModel
- * launches a collection job that mirrors [PlayerService.uiState] into [uiState].
- * The [player] flow exposes the service's [ExoPlayer] instance so the Compose UI
- * can wire it into [androidx.media3.ui.PlayerView] via [AndroidView].
+ * Once bound, a collection job mirrors [PlayerService.uiState] into [uiState].
+ * [player] exposes the [ExoPlayer] instance for wiring into a PlayerView.
  *
  * ## Service lifetime
- * [initPlayer] starts the service as a foreground service (required on API 26+)
- * before binding. The service is unbound in [onCleared] but is *not* stopped —
- * playback continues in the background. Stopping is triggered by the notification
- * dismiss action inside [PlayerService].
+ * The service is unbound in [onCleared] but is not stopped — playback continues
+ * in the background. The notification dismiss action inside [PlayerService]
+ * is responsible for calling [stopSelf].
  *
  * @param application Application context passed through [AndroidViewModel].
  */
@@ -53,30 +56,30 @@ class PlayerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
-    // ── ExoPlayer instance (exposed for AndroidView wiring) ───────────────────
+    // ── ExoPlayer instance (exposed for PlayerView wiring) ────────────────────
 
     private val _player = MutableStateFlow<ExoPlayer?>(null)
     val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
 
     // ── Service binding ───────────────────────────────────────────────────────
 
-    private var playerService  : PlayerService? = null
-    private var isBound        : Boolean        = false
-    private var stateJob       : Job?           = null
+    private var playerService : PlayerService? = null
+    private var isBound       : Boolean        = false
+    private var stateJob      : Job?           = null
 
-    /** Cached so [retry] can re-submit the original URL rather than the resolved title. */
-    private var lastStreamUrl  : String         = ""
+    /** Preserved so [retry] can resubmit the original page URL, not the resolved title. */
+    private var lastStreamUrl : String         = ""
 
     private val connection = object : ServiceConnection {
 
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val service = (binder as PlayerService.PlayerBinder).getService()
+            val service   = (binder as PlayerService.PlayerBinder).getService()
             playerService = service
             isBound       = true
             _player.value = service.exoPlayer
 
-            // Mirror service state into our own StateFlow so the UI has a
-            // single, stable reference that survives rebinds.
+            // Mirror service state into our own flow so the UI has a single,
+            // stable reference that survives activity recreations and rebinds.
             stateJob?.cancel()
             stateJob = viewModelScope.launch {
                 service.uiState.collect { _uiState.value = it }
@@ -93,24 +96,30 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    // ── Public API ─────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Starts [PlayerService] as a foreground service and binds to it.
-     *
-     * Safe to call multiple times — the service ignores duplicate loads for the
-     * same URL, so calling this on activity recreation is harmless.
+     * Starts [PlayerService] as a foreground service and binds to it using
+     * [PlayerService.ACTION_BIND]. Safe to call on activity recreation — the
+     * service deduplicates loads for the same URL.
      *
      * @param streamUrl YouTube page URL forwarded to the service for extraction.
-     * @param title     Optional display title used while stream info is loading.
+     * @param title     Optional display title used while stream metadata loads.
      */
     fun initPlayer(streamUrl: String, title: String?) {
         lastStreamUrl = streamUrl
         val context = getApplication<Application>()
-        val intent  = buildServiceIntent(context, streamUrl, title)
 
-        context.startForegroundService(intent)
-        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        // Start intent carries the stream URL for onStartCommand.
+        val startIntent = buildServiceIntent(context, streamUrl, title)
+        context.startForegroundService(startIntent)
+
+        // Bind intent uses ACTION_BIND so MediaSessionService.onBind routes
+        // to our PlayerBinder instead of the Media3 session path.
+        val bindIntent = Intent(context, PlayerService::class.java).apply {
+            action = PlayerService.ACTION_BIND
+        }
+        context.bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)
     }
 
     fun play()                   { playerService?.play() }
@@ -118,15 +127,17 @@ class PlayerViewModel @Inject constructor(
     fun seekTo(positionMs: Long) { playerService?.seekTo(positionMs) }
 
     /**
-     * Re-submits the original stream URL to [PlayerService] when the player is
-     * in an error state. Uses [lastStreamUrl] — the URL passed to [initPlayer] —
-     * rather than the resolved title, which is not a valid page URL.
+     * Resubmits [lastStreamUrl] to [PlayerService] when the player is in an
+     * error state. Uses the original page URL rather than the resolved title,
+     * which is not a valid stream URL.
      */
     fun retry() {
         val service = playerService ?: return
-        val state   = _uiState.value
-        if (state.phase == PlayerUiState.Phase.Error && lastStreamUrl.isNotBlank()) {
-            service.loadAndPlay(lastStreamUrl, state.title.takeIf { it.isNotBlank() })
+        if (_uiState.value.phase == PlayerUiState.Phase.Error && lastStreamUrl.isNotBlank()) {
+            service.loadAndPlay(
+                pageUrl = lastStreamUrl,
+                title   = _uiState.value.title.takeIf { it.isNotBlank() },
+            )
         }
     }
 
@@ -141,7 +152,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun buildServiceIntent(
         context   : Context,

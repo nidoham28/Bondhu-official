@@ -7,9 +7,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material3.Icon
@@ -48,7 +52,7 @@ fun PlayerActionRow(modifier: Modifier = Modifier) {
     Row(
         modifier              = modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment     = Alignment.CenterVertically,
     ) {
@@ -81,7 +85,7 @@ fun PlayerActionRow(modifier: Modifier = Modifier) {
         }
 
         ActionItem(
-            icon    = Icons.Rounded.Reply,
+            icon    = Icons.Rounded.Share,
             label   = "Share",
             onClick = { /* wire to share intent */ },
         )
@@ -91,7 +95,7 @@ fun PlayerActionRow(modifier: Modifier = Modifier) {
             onClick = { /* wire to download */ },
         )
         ActionItem(
-            icon    = Icons.Rounded.SaveAlt,
+            icon    = Icons.AutoMirrored.Rounded.PlaylistAdd,
             label   = "Save",
             onClick = { /* wire to playlist */ },
         )

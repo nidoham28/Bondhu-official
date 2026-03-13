@@ -2,21 +2,15 @@
 
 package com.nidoham.bondhu.player
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
 import android.content.Intent
-import android.graphics.Bitmap
 import android.os.Binder
 import android.os.IBinder
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerNotificationManager
-import com.nidoham.bondhu.PlayerActivity
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import com.nidoham.bondhu.player.state.PlayerUiState
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.extractor.stream.StreamExtractor
@@ -26,6 +20,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,41 +32,51 @@ import javax.inject.Inject
 
 /**
  * Foreground service that owns the [ExoPlayer] instance and manages the full
- * stream lifecycle: metadata extraction → URL resolution → playback → notification.
+ * stream lifecycle: metadata extraction → URL resolution → playback.
  *
- * Extends [Service] directly. [PlayerNotificationManager] and several other
- * Media3 APIs used here are annotated with [UnstableApi]; the file-level
- * [OptIn] suppresses those warnings project-wide for this file.
+ * Extends [MediaSessionService] — the modern Media3 replacement for plain
+ * [android.app.Service]. Benefits over the old approach:
+ * - Notification and foreground promotion are handled automatically via
+ *   [MediaSession]; no [androidx.media3.ui.PlayerNotificationManager] or
+ *   manual [startForeground] calls are needed.
+ * - The session is accessible to system UI, Wear OS, and Android Auto via
+ *   [onGetSession].
+ *
+ * Internal consumers (e.g. the ViewModel) bind using [ACTION_BIND] to receive
+ * the [PlayerBinder] and call [loadAndPlay] / [play] / [pause] directly.
+ * External Media3 clients (MediaController) use the normal session token path
+ * via the base-class [onBind] handler.
  *
  * ## Lifecycle note
- * [onDestroy] releases [ExoPlayer] and cancels all coroutines. The notification
- * is detached automatically by [PlayerNotificationManager].
+ * [onDestroy] releases both [exoPlayer] and [mediaSession], and cancels the
+ * [serviceScope] to prevent coroutine leaks.
  */
 @AndroidEntryPoint
-class PlayerService : Service() {
+class PlayerService : MediaSessionService() {
 
     @Inject
     lateinit var streamExtractor: StreamExtractor
 
-    // ── ExoPlayer ─────────────────────────────────────────────────────────────
+    // ── ExoPlayer + MediaSession ──────────────────────────────────────────────
 
     lateinit var exoPlayer: ExoPlayer
-        private set
+    private lateinit var mediaSession: MediaSession
 
     // ── State ─────────────────────────────────────────────────────────────────
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
-    // ── Coroutine scope ───────────────────────────────────────────────────────
+    // ── Coroutines ────────────────────────────────────────────────────────────
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var loadJob: Job? = null
+    private var progressJob: Job? = null
 
-    /** Tracks the last-loaded URL to skip redundant re-extractions on rebind. */
+    /** Prevents redundant re-extraction on config changes / rebinds. */
     private var currentUrl: String = ""
 
-    // ── Binder ────────────────────────────────────────────────────────────────
+    // ── Binder (internal ViewModel binding) ───────────────────────────────────
 
     inner class PlayerBinder : Binder() {
         fun getService(): PlayerService = this@PlayerService
@@ -78,47 +84,65 @@ class PlayerService : Service() {
 
     private val binder = PlayerBinder()
 
-    // ── Notification ──────────────────────────────────────────────────────────
-
-    private lateinit var playerNotificationManager: PlayerNotificationManager
-
     companion object {
-        private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID      = "player_playback_channel"
+        /**
+         * Intent action used by the ViewModel when binding to this service.
+         * The base class reserves the default action for MediaController clients.
+         */
+        const val ACTION_BIND = "com.nidoham.bondhu.player.ACTION_BIND"
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
-        exoPlayer = ExoPlayer.Builder(this).build()
+        exoPlayer    = ExoPlayer.Builder(this).build()
+        mediaSession = MediaSession.Builder(this, exoPlayer).build()
         setupPlayerListener()
-        setupNotificationChannel()
-        setupNotificationManager()
     }
 
     /**
+     * Returns the active [MediaSession] to Media3 / system clients.
+     * Called by the base class whenever a [androidx.media3.session.MediaController]
+     * connects.
+     */
+    override fun onGetSession(
+        controllerInfo: MediaSession.ControllerInfo,
+    ): MediaSession = mediaSession
+
+    /**
+     * Routes binding requests:
+     * - [ACTION_BIND] → [PlayerBinder] for ViewModel direct access.
+     * - Anything else → delegated to [MediaSessionService.onBind] for
+     *   standard MediaController / system UI clients.
+     */
+    override fun onBind(intent: Intent?): IBinder? =
+        if (intent?.action == ACTION_BIND) binder
+        else super.onBind(intent)
+
+    /**
      * Reads [NavigationHelper.EXTRA_STREAM_URL] and [NavigationHelper.EXTRA_TITLE]
-     * from the intent and delegates to [loadAndPlay] if the URL differs from the
-     * currently loaded one (prevents duplicate extraction on config changes).
+     * from the intent, then delegates to [loadAndPlay] when the URL is new.
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val url   = intent?.getStringExtra(NavigationHelper.EXTRA_STREAM_URL) ?: return START_NOT_STICKY
+        super.onStartCommand(intent, flags, startId)
+        val url   = intent?.getStringExtra(NavigationHelper.EXTRA_STREAM_URL)
+            ?: return START_NOT_STICKY
         val title = intent.getStringExtra(NavigationHelper.EXTRA_TITLE)
         if (url != currentUrl) loadAndPlay(url, title)
         return START_NOT_STICKY
     }
 
-    override fun onBind(intent: Intent): IBinder = binder
-
     override fun onDestroy() {
-        playerNotificationManager.setPlayer(null)
+        mediaSession.release()
         exoPlayer.release()
+        stopProgressUpdates()
         loadJob?.cancel()
+        serviceScope.cancel()
         super.onDestroy()
     }
 
-    // ── Public API ─────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────
 
     fun play()                   { exoPlayer.play() }
     fun pause()                  { exoPlayer.pause() }
@@ -128,9 +152,9 @@ class PlayerService : Service() {
      * Cancels any in-flight extraction, resets state to [PlayerUiState.Phase.Loading],
      * then fetches stream metadata for [pageUrl] and begins playback.
      *
-     * @param pageUrl  YouTube video page URL (e.g. `https://youtube.com/watch?v=ID`).
-     * @param title    Optional title shown in the notification and top bar while loading.
-     *                 Overridden by the title returned from the extractor once available.
+     * @param pageUrl YouTube video page URL (e.g. `https://youtube.com/watch?v=ID`).
+     * @param title   Optional title shown while loading; overridden once extraction
+     *                returns the real title.
      */
     fun loadAndPlay(pageUrl: String, title: String?) {
         loadJob?.cancel()
@@ -154,7 +178,9 @@ class PlayerService : Service() {
                         return@onSuccess
                     }
 
-                    val resolvedTitle = title?.takeIf { it.isNotBlank() } ?: data.stream.title
+                    val resolvedTitle = title
+                        ?.takeIf { it.isNotBlank() }
+                        ?: data.stream.title
 
                     withContext(Dispatchers.Main) {
                         exoPlayer.setMediaItem(MediaItem.fromUri(playbackUrl))
@@ -166,6 +192,8 @@ class PlayerService : Service() {
                         phase        = PlayerUiState.Phase.Ready,
                         title        = resolvedTitle,
                         uploaderName = data.stream.uploaderName,
+                        uploaderUrl  = data.stream.uploaderAvatars
+                            .maxByOrNull { it.height }?.url,
                         thumbnailUrl = data.stream.thumbnails
                             .maxByOrNull { it.height }?.url,
                         duration     = data.stream.duration,
@@ -182,6 +210,26 @@ class PlayerService : Service() {
         }
     }
 
+    private fun startProgressUpdates() {
+        stopProgressUpdates()
+        progressJob = serviceScope.launch {
+            while (true) {
+                if (exoPlayer.isPlaying) {
+                    _uiState.value = _uiState.value.copy(
+                        duration = exoPlayer.duration.coerceAtLeast(0L) / 1000,
+                        // We could add a currentPosition field to PlayerUiState if needed
+                    )
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopProgressUpdates() {
+        progressJob?.cancel()
+        progressJob = null
+    }
+
     // ── ExoPlayer listener ────────────────────────────────────────────────────
 
     private fun setupPlayerListener() {
@@ -189,6 +237,7 @@ class PlayerService : Service() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
+                if (isPlaying) startProgressUpdates() else stopProgressUpdates()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -215,70 +264,6 @@ class PlayerService : Service() {
             }
         })
     }
-
-    // ── Notification ──────────────────────────────────────────────────────────
-
-    // minSdk is 26 — NotificationChannel is always available, no SDK_INT guard needed.
-    private fun setupNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Media Playback",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "Shows playback controls for the active stream."
-        }
-        getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(channel)
-    }
-
-    private fun setupNotificationManager() {
-        val contentIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, PlayerActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
-        playerNotificationManager = PlayerNotificationManager
-            .Builder(this, NOTIFICATION_ID, CHANNEL_ID)
-            .setMediaDescriptionAdapter(object : PlayerNotificationManager.MediaDescriptionAdapter {
-
-                override fun getCurrentContentTitle(player: Player): CharSequence =
-                    _uiState.value.title.ifBlank { "Playing" }
-
-                override fun createCurrentContentIntent(player: Player): PendingIntent =
-                    contentIntent
-
-                override fun getCurrentContentText(player: Player): CharSequence? =
-                    _uiState.value.uploaderName.takeIf { it.isNotBlank() }
-
-                override fun getCurrentLargeIcon(
-                    player   : Player,
-                    callback : PlayerNotificationManager.BitmapCallback,
-                ): Bitmap? = null
-            })
-            .setNotificationListener(object : PlayerNotificationManager.NotificationListener {
-
-                override fun onNotificationPosted(
-                    notificationId : Int,
-                    notification   : Notification,
-                    ongoing        : Boolean,
-                ) {
-                    if (ongoing) startForeground(notificationId, notification)
-                    else         stopForeground(STOP_FOREGROUND_DETACH)
-                }
-
-                override fun onNotificationCancelled(
-                    notificationId  : Int,
-                    dismissedByUser : Boolean,
-                ) {
-                    stopSelf()
-                }
-            })
-            .build()
-
-        playerNotificationManager.setPlayer(exoPlayer)
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,11 +273,11 @@ class PlayerService : Service() {
 /**
  * Resolves the best available playback URL from this [Streams] object.
  *
- * Priority chain (highest to lowest quality / compatibility):
- * 1. HLS manifest — adaptive, widely supported by ExoPlayer out of the box.
+ * Priority chain (highest → lowest):
+ * 1. HLS manifest — adaptive, natively supported by ExoPlayer.
  * 2. DASH manifest — adaptive, higher ceiling but requires DASH parsing.
- * 3. Best progressive video stream — direct URL, sorted by resolution height.
- * 4. Best audio-only stream — fallback for audio-only content.
+ * 3. Best progressive video stream — direct URL, sorted by height.
+ * 4. Best audio-only stream — last resort for audio-only content.
  *
  * Returns `null` if none of the above are available.
  */

@@ -38,6 +38,7 @@ junitVersion = "1.3.0"
 espressoCore = "3.7.0"
 activity = "1.13.0"
 exifinterface = "1.4.2"
+media3Session = "1.9.2"
 
 [libraries]
 # Core
@@ -127,6 +128,7 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
+androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3Session" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

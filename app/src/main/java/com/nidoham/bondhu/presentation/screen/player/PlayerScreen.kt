@@ -11,7 +11,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.media3.exoplayer.ExoPlayer
 import com.nidoham.bondhu.player.state.PlayerUiState
 
@@ -97,9 +96,10 @@ fun PlayerScreen(
 
             // Metadata — only meaningful once stream info is resolved
             PlayerInfoSection(
-                title        = uiState.title,
+                title = uiState.title,
                 uploaderName = uiState.uploaderName,
-                modifier     = Modifier
+                uploaderUrl = uiState.uploaderUrl,
+                modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background),
             )

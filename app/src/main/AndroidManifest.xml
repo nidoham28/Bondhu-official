@@ -40,10 +40,11 @@
         android:theme="@style/Theme.Bondhu"
         android:usesCleartextTraffic="false"
         tools:targetApi="33">
+
         <activity
             android:name=".PlayerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false" />
-        <!-- Splash — launcher entry point -->
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -91,8 +92,12 @@
 
         <service
             android:name=".player.PlayerService"
-            android:foregroundServiceType="mediaPlayback"
-            android:exported="false" />
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

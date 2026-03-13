@@ -1,20 +1,20 @@
 package com.nidoham.bondhu
 
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalConfiguration
-import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,22 +28,20 @@ import dagger.hilt.android.AndroidEntryPoint
  * Full-screen video player activity.
  *
  * Reads [NavigationHelper.EXTRA_STREAM_URL] and [NavigationHelper.EXTRA_TITLE]
- * from the intent and delegates all extraction/playback to [PlayerService]
+ * from the intent and delegates all extraction and playback to [PlayerService]
  * through [PlayerViewModel]. The activity itself is intentionally thin: it
  * manages orientation, system UI visibility, and wires the Compose tree.
  *
  * ## Orientation behaviour
- * - **Portrait** — standard layout with status bar visible.
- * - **Landscape** — system bars are hidden via [WindowInsetsControllerCompat]
- *   to achieve a true full-screen (immersive) experience, matching YouTube.
- *   [WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON] is set for both orientations
- *   so the display never dims during playback.
+ * Portrait shows the standard layout with system bars visible. Landscape hides
+ * all system bars via [WindowInsetsControllerCompat] for a true immersive
+ * experience. [WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON] prevents
+ * the display from dimming during playback in either orientation.
  *
- * ## Fullscreen toggle
- * The [PlayerScreen] exposes an `onToggleFullscreen` callback. When called in
- * portrait it rotates to landscape, and vice versa, via
- * [requestedOrientation]. Android then recreates the layout for the new
- * orientation; [PlayerViewModel] survives this via [ViewModel] + service binding.
+ * ## Config changes
+ * `orientation`, `screenSize`, and `screenLayout` are handled in-process
+ * (declared in the manifest) so the activity is never recreated on rotation.
+ * The Compose tree reacts to the new [LocalConfiguration] automatically.
  */
 @AndroidEntryPoint
 class PlayerActivity : BaseActivity() {
@@ -63,12 +61,12 @@ class PlayerActivity : BaseActivity() {
 
         setContent {
             AppTheme {
-                val uiState     by viewModel.uiState.collectAsStateWithLifecycle()
-                val player      by viewModel.player.collectAsStateWithLifecycle()
-                val config       = LocalConfiguration.current
-                val isLandscape  = config.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val uiState    by viewModel.uiState.collectAsStateWithLifecycle()
+                val player     by viewModel.player.collectAsStateWithLifecycle()
+                val config      = LocalConfiguration.current
+                val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-                // Hide/show system bars based on orientation.
+                // Hide or restore system bars whenever orientation changes.
                 LaunchedEffect(isLandscape) {
                     val controller = WindowInsetsControllerCompat(window, window.decorView)
                     if (isLandscape) {
@@ -80,18 +78,25 @@ class PlayerActivity : BaseActivity() {
                     }
                 }
 
-                // Bind to PlayerService exactly once on initial composition.
+                // Bind to PlayerService once on initial composition.
                 LaunchedEffect(Unit) {
                     viewModel.initPlayer(streamUrl, title)
                 }
 
-                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)){
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
                     PlayerScreen(
                         uiState            = uiState,
                         player             = player,
                         isLandscape        = isLandscape,
                         onBack             = {
                             if (isLandscape) {
+                                // Return to portrait explicitly rather than delegating
+                                // to SCREEN_ORIENTATION_UNSPECIFIED, which is ambiguous
+                                // on devices with rotation lock enabled.
                                 requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                             } else {
                                 finish()
@@ -103,14 +108,13 @@ class PlayerActivity : BaseActivity() {
                         onRetry            = viewModel::retry,
                         onToggleFullscreen = {
                             requestedOrientation = if (isLandscape) {
-                                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                             } else {
                                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                             }
                         },
                     )
                 }
-
             }
         }
     }

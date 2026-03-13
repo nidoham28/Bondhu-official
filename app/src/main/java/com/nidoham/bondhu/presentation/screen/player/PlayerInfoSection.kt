@@ -19,31 +19,39 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.nidoham.bondhu.R
 
 /**
  * Portrait-only metadata panel rendered below the 16:9 video surface.
  *
- * Displays the video title (up to two lines), uploader channel name, a
- * Subscribe button, and the [PlayerActionRow] (like / share / download / save).
- * A [HorizontalDivider] separates the action row from the content that would
- * follow in a full implementation (comments, recommended videos, etc.).
+ * Displays the video title (up to two lines), uploader channel name with a
+ * circular avatar loaded via Coil (falls back to [R.drawable.ic_default_avatar]
+ * on load failure or when [uploaderUrl] is null), a Subscribe button, and
+ * the [PlayerActionRow].
  *
  * All data flows in from [PlayerUiState] — no Firebase or repository calls are
  * made here.
  *
  * @param title        Video title; shown in bold, max 2 lines.
- * @param uploaderName Channel name; shown as a subdued subtitle.
+ * @param uploaderName Channel name; shown alongside the avatar.
+ * @param uploaderUrl  Remote image URL for the channel avatar. When null or
+ *                     the load fails, [R.drawable.ic_default_avatar] is shown.
  * @param modifier     Applied to the root [Column].
  */
 @Composable
 fun PlayerInfoSection(
-    title        : String,
-    uploaderName : String,
-    modifier     : Modifier = Modifier,
+    title: String,
+    uploaderName: String,
+    uploaderUrl: String?,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
@@ -51,7 +59,7 @@ fun PlayerInfoSection(
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        // Title
+        // ── Title ────────────────────────────────────────────────────────────
         if (title.isNotBlank()) {
             Text(
                 text       = title,
@@ -64,53 +72,33 @@ fun PlayerInfoSection(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Channel row + Subscribe
+        // ── Channel row + Subscribe ──────────────────────────────────────────
         if (uploaderName.isNotBlank()) {
             Row(
                 modifier          = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Avatar placeholder
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .then(
-                            Modifier.padding(0.dp) // replaced by Coil AsyncImage when available
-                        )
-                ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.size(36.dp)) {
-                        drawCircle(color = Color(0xFF616161))
-                    }
-                    androidx.compose.material3.Text(
-                        text     = uploaderName.take(1).uppercase(),
-                        style    = MaterialTheme.typography.labelLarge,
-                        color    = Color.White,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
+                ChannelAvatar(
+                    avatarUrl    = uploaderUrl,
+                    uploaderName = uploaderName,
+                )
 
                 Spacer(Modifier.width(10.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text     = uploaderName,
-                        style    = MaterialTheme.typography.bodyMedium,
+                        text       = uploaderName,
+                        style      = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
-                        color    = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text  = "Subscribe",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color      = MaterialTheme.colorScheme.onSurface,
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis,
                     )
                 }
 
                 Button(
-                    onClick  = { /* wire to subscribe action */ },
-                    colors   = ButtonDefaults.buttonColors(
+                    onClick = { /* wire to subscribe action */ },
+                    colors  = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.onSurface,
                         contentColor   = MaterialTheme.colorScheme.surface,
                     ),
@@ -127,16 +115,49 @@ fun PlayerInfoSection(
         }
 
         HorizontalDivider(
-            modifier  = Modifier.padding(vertical = 8.dp),
-            color     = MaterialTheme.colorScheme.outlineVariant,
+            modifier = Modifier.padding(vertical = 8.dp),
+            color    = MaterialTheme.colorScheme.outlineVariant,
         )
 
-        // Action row
+        // ── Action row ───────────────────────────────────────────────────────
         PlayerActionRow(modifier = Modifier.padding(vertical = 4.dp))
 
         HorizontalDivider(
-            modifier  = Modifier.padding(vertical = 8.dp),
-            color     = MaterialTheme.colorScheme.outlineVariant,
+            modifier = Modifier.padding(vertical = 8.dp),
+            color    = MaterialTheme.colorScheme.outlineVariant,
         )
     }
+}
+
+/**
+ * Circular channel avatar backed by Coil's [AsyncImage].
+ *
+ * Displays [R.drawable.ic_default_avatar] both while the remote image is
+ * loading and when the load fails entirely, ensuring the UI is never blank
+ * regardless of network state. Cross-fade is enabled for a smooth transition
+ * once the real image arrives.
+ *
+ * @param avatarUrl    Remote URL to load. May be null.
+ * @param uploaderName Used for the accessibility content description.
+ */
+@Composable
+private fun ChannelAvatar(
+    avatarUrl    : String?,
+    uploaderName : String,
+) {
+    val defaultAvatar = painterResource(R.drawable.ic_launcher)
+
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(avatarUrl)
+            .crossfade(true)
+            .build(),
+        contentDescription = "$uploaderName channel avatar",
+        contentScale       = ContentScale.Crop,
+        placeholder        = defaultAvatar,
+        error              = defaultAvatar,
+        modifier           = Modifier
+            .size(36.dp)
+            .clip(CircleShape),
+    )
 }
