@@ -40,12 +40,12 @@ enum class SearchTab { PEOPLE, YOUTUBE }
  *   the empty state with accurate text.
  */
 data class YouTubeSearchState(
-    val items: List<StreamItem> = emptyList(),
-    val isLoading: Boolean = false,
-    val isLoadingMore: Boolean = false,
-    val hasNextPage: Boolean = false,
-    val error: String? = null,
-    val searchedQuery: String = "",
+    val items         : List<StreamItem> = emptyList(),
+    val isLoading     : Boolean          = false,
+    val isLoadingMore : Boolean          = false,
+    val hasNextPage   : Boolean          = false,
+    val error         : String?          = null,
+    val searchedQuery : String           = "",
 )
 
 /**
@@ -63,8 +63,8 @@ data class YouTubeSearchState(
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val userRepository: UserRepository,
-    private val youTubeRepository: YouTubeSearchRepository,
+    private val userRepository    : UserRepository,
+    private val youTubeRepository : YouTubeSearchRepository,
 ) : ViewModel() {
 
     // ── Shared query / tab ─────────────────────────────────────────────────────
@@ -136,25 +136,25 @@ class SearchViewModel @Inject constructor(
      */
     fun loadMoreYouTube() {
         val session = currentSession ?: return
-        val state = _youTubeState.value
+        val state   = _youTubeState.value
         if (!state.hasNextPage || state.isLoadingMore || state.isLoading) return
 
         viewModelScope.launch {
             _youTubeState.value = state.copy(isLoadingMore = true, error = null)
             youTubeRepository.fetchMore(session)
                 .onSuccess { result ->
-                    currentSession = session.copy(nextPage = result.nextPage)
+                    currentSession      = session.copy(nextPage = result.nextPage)
                     _youTubeState.value = _youTubeState.value.copy(
-                        items = _youTubeState.value.items + result.items,
+                        items         = _youTubeState.value.items + result.items,
                         isLoadingMore = false,
-                        hasNextPage = result.hasNextPage,
+                        hasNextPage   = result.hasNextPage,
                     )
                 }
                 .onFailure { error ->
                     Timber.e(error, "YouTube fetchMore failed")
                     _youTubeState.value = _youTubeState.value.copy(
                         isLoadingMore = false,
-                        error = error.localizedMessage ?: "Failed to load more results.",
+                        error         = error.localizedMessage ?: "Failed to load more results.",
                     )
                 }
         }
@@ -173,24 +173,24 @@ class SearchViewModel @Inject constructor(
     private fun performYouTubeSearch(query: String) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            currentSession = null
+            currentSession      = null
             _youTubeState.value = YouTubeSearchState(isLoading = true)
 
             youTubeRepository.search(query)
                 .onSuccess { (result, session) ->
-                    currentSession = session.copy(nextPage = result.nextPage)
+                    currentSession      = session.copy(nextPage = result.nextPage)
                     _youTubeState.value = YouTubeSearchState(
-                        items = result.items,
-                        isLoading = false,
-                        hasNextPage = result.hasNextPage,
+                        items         = result.items,
+                        isLoading     = false,
+                        hasNextPage   = result.hasNextPage,
                         searchedQuery = query,
                     )
                 }
                 .onFailure { error ->
                     Timber.e(error, "YouTube search failed for query='$query'")
                     _youTubeState.value = YouTubeSearchState(
-                        isLoading = false,
-                        error = error.localizedMessage ?: "Search failed. Please try again.",
+                        isLoading     = false,
+                        error         = error.localizedMessage ?: "Search failed. Please try again.",
                         searchedQuery = query,
                     )
                 }
@@ -199,7 +199,7 @@ class SearchViewModel @Inject constructor(
 
     private fun resetYouTubeState() {
         searchJob?.cancel()
-        currentSession = null
+        currentSession      = null
         _youTubeState.value = YouTubeSearchState()
     }
 }

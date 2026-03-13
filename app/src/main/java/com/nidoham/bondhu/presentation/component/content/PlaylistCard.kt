@@ -1,7 +1,6 @@
 package com.nidoham.bondhu.presentation.component.content
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +31,6 @@ fun PlaylistCard(item: StreamItem) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,

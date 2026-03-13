@@ -11,6 +11,7 @@ appcompat = "1.7.1"
 material = "1.13.0"
 firebaseBom = "34.10.0"
 coroutines = "1.10.2"
+media3Exoplayer = "1.9.2"
 navigationCompose = "2.9.7"
 coil = "2.7.0"
 pagingRuntime = "3.4.2"
@@ -42,6 +43,9 @@ exifinterface = "1.4.2"
 # Core
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "media3Exoplayer" }
+androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3Exoplayer" }
+androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3Exoplayer" }
 androidx-paging-compose = { module = "androidx.paging:paging-compose", version.ref = "pagingRuntime" }
 androidx-paging-runtime = { module = "androidx.paging:paging-runtime", version.ref = "pagingRuntime" }
 extractor = { module = "com.github.nidoham:Extractor", version.ref = "extractor" }

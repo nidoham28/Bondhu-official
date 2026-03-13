@@ -1,5 +1,6 @@
 package com.nidoham.bondhu.presentation.screen.search
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,17 +53,19 @@ import com.nidoham.extractor.stream.StreamItem
  * @param state Current [YouTubeSearchState] owned by the ViewModel.
  * @param onLoadMore Called when the list is near the bottom and more results are available.
  * @param onRetry Called when the user taps "Try again" on the error state.
+ * @param onItemClick Called when the user taps any result item; receives the tapped [StreamItem].
  * @param modifier Modifier applied to the root container.
  */
 @Composable
 fun YoutubeSearchScreen(
-    state: YouTubeSearchState,
-    onLoadMore: () -> Unit,
-    onRetry: () -> Unit,
-    modifier: Modifier = Modifier,
+    state       : YouTubeSearchState,
+    onLoadMore  : () -> Unit,
+    onRetry     : () -> Unit,
+    onItemClick : (StreamItem) -> Unit,
+    modifier    : Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier         = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -75,9 +78,9 @@ fun YoutubeSearchScreen(
             // ── First-page loading spinner ─────────────────────────────────────
             state.isLoading -> {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(36.dp),
+                    modifier    = Modifier.size(36.dp),
                     strokeWidth = 2.5.dp,
-                    color = MaterialTheme.colorScheme.primary,
+                    color       = MaterialTheme.colorScheme.primary,
                 )
             }
 
@@ -89,12 +92,18 @@ fun YoutubeSearchScreen(
                 )
             }
 
+            // ── Query returned zero items ──────────────────────────────────────
+            state.items.isEmpty() && state.searchedQuery.isNotBlank() -> {
+                YouTubeEmptyState(query = state.searchedQuery)
+            }
+
             // ── Results list ───────────────────────────────────────────────────
             else -> {
                 YouTubeResultsList(
-                    state = state,
-                    onLoadMore = onLoadMore,
-                    onRetry = onRetry,
+                    state       = state,
+                    onLoadMore  = onLoadMore,
+                    onRetry     = onRetry,
+                    onItemClick = onItemClick,
                 )
             }
         }
@@ -107,17 +116,19 @@ fun YoutubeSearchScreen(
 
 @Composable
 private fun YouTubeResultsList(
-    state: YouTubeSearchState,
-    onLoadMore: () -> Unit,
-    onRetry: () -> Unit,
+    state       : YouTubeSearchState,
+    onLoadMore  : () -> Unit,
+    onRetry     : () -> Unit,
+    onItemClick : (StreamItem) -> Unit,
 ) {
     val listState = rememberLazyListState()
 
     // Trigger load-more when 3 items from the end become visible.
     val shouldLoadMore by remember {
         derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
-            val totalItems  = listState.layoutInfo.totalItemsCount
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                ?: return@derivedStateOf false
+            val totalItems = listState.layoutInfo.totalItemsCount
             lastVisible >= totalItems - 3
         }
     }
@@ -136,16 +147,35 @@ private fun YouTubeResultsList(
             key   = { it.url ?: it.name },
         ) { item ->
             when (item.type) {
-                StreamItem.ItemType.VIDEO   -> VideoCard(item = item)
-                StreamItem.ItemType.CHANNEL -> {
-                    ChannelRow(item = item)
+                StreamItem.ItemType.VIDEO    -> {
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onItemClick(item) }
+                    ) {
+                        VideoCard(item = item)
+                    }
+                }
+                StreamItem.ItemType.CHANNEL  -> {
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onItemClick(item) }
+                    ) {
+                        ChannelRow(item = item)
+                    }
                     HorizontalDivider(
                         modifier  = Modifier.padding(horizontal = 16.dp),
                         thickness = 0.5.dp,
                         color     = MaterialTheme.colorScheme.outlineVariant,
                     )
                 }
-                StreamItem.ItemType.PLAYLIST -> PlaylistCard(item = item)
+                StreamItem.ItemType.PLAYLIST -> {
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onItemClick(item) }
+                    ) {
+                        PlaylistCard(item = item)
+                    }
+                }
                 else                         -> Unit // gracefully skip unsupported types
             }
         }
@@ -254,8 +284,8 @@ private fun YouTubeIdleState() {
 
 @Composable
 private fun YouTubeErrorState(
-    message: String,
-    onRetry: () -> Unit,
+    message : String,
+    onRetry : () -> Unit,
 ) {
     val cs = MaterialTheme.colorScheme
     Column(

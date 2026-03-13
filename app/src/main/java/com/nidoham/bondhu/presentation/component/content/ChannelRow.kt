@@ -1,7 +1,6 @@
 package com.nidoham.bondhu.presentation.component.content
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,7 +30,6 @@ fun ChannelRow(item: StreamItem) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),

@@ -8,6 +8,7 @@ import com.nidoham.bondhu.CompleteProfileActivity
 import com.nidoham.bondhu.ForgotPasswordActivity
 import com.nidoham.bondhu.LoginActivity
 import com.nidoham.bondhu.MainActivity
+import com.nidoham.bondhu.PlayerActivity
 import com.nidoham.bondhu.R
 import com.nidoham.bondhu.RegisterActivity
 
@@ -15,8 +16,10 @@ object NavigationHelper {
 
     // Intent extras
     private const val EXTRA_USER_ID         = "extra_user_id"
-    const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"   // read by ChatActivity
-    const val EXTRA_TARGET_ID               = "extra_target_id"         // fixed: was "extra_conversation_id", causing key collision
+    const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"
+    const val EXTRA_TARGET_ID               = "extra_target_id"
+    const val EXTRA_STREAM_URL              = "extra_stream_url"
+    const val EXTRA_TITLE                   = "extra_title"
 
     // ─────────────────────────────────────────────────────────────────────────
     // Transitions
@@ -33,10 +36,10 @@ object NavigationHelper {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun launch(
-        context: Context,
-        intent: Intent,
-        transition: ActivityOptions,
-        clearStack: Boolean = false
+        context    : Context,
+        intent     : Intent,
+        transition : ActivityOptions,
+        clearStack : Boolean = false
     ) {
         if (clearStack) {
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -96,7 +99,25 @@ object NavigationHelper {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         val intent = Intent(context, ChatActivity::class.java).apply {
             putExtra(EXTRA_CONVERSATION_ID, conversationId)
-            targetUid?.let { putExtra(EXTRA_TARGET_ID, it) }   // guard: only written when non-null
+            targetUid?.let { putExtra(EXTRA_TARGET_ID, it) }
+        }
+        launch(context = context, intent = intent, transition = slideTransition(context))
+    }
+
+    /**
+     * Opens [PlayerActivity] for the given [streamUrl] and optional [title].
+     *
+     * PlayerActivity reads the values via:
+     *   val streamUrl = intent.getStringExtra(NavigationHelper.EXTRA_STREAM_URL) ?: ""
+     *   val title     = intent.getStringExtra(NavigationHelper.EXTRA_TITLE)
+     *
+     * Uses a slide transition — consistent with other content-detail destinations.
+     */
+    fun navigateToPlayer(context: Context, streamUrl: String, title: String? = null) {
+        require(streamUrl.isNotBlank()) { "streamUrl must not be blank" }
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            putExtra(EXTRA_STREAM_URL, streamUrl)
+            title?.let { putExtra(EXTRA_TITLE, it) }
         }
         launch(context = context, intent = intent, transition = slideTransition(context))
     }

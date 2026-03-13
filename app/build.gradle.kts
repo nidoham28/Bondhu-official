@@ -14,8 +14,8 @@ android {
         applicationId = "com.nidoham.bondhu"
         minSdk        = 26
         targetSdk     = 36
-        versionCode   = 3
-        versionName   = "1.0.2-alpha"
+        versionCode   = 4
+        versionName   = "1.0.4-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -141,6 +141,11 @@ dependencies {
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
+
+    // Media3
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.common)
 
     // Local modules
     implementation(project(":server"))

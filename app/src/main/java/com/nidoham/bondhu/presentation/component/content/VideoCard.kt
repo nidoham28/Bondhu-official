@@ -1,7 +1,6 @@
 package com.nidoham.bondhu.presentation.component.content
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,7 +65,6 @@ fun VideoBox(item: StreamItem) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { /* TODO: Navigate */ }
             .padding(bottom = 8.dp),
     ) {
 
@@ -183,7 +181,7 @@ fun VideoBox(item: StreamItem) {
                 contentAlignment = Alignment.Center,
             ) {
                 // FIX 3: isNullOrEmpty() guards against a null uploaderAvatarUrl
-                if (!item.uploaderAvatarUrl.isNullOrEmpty()) {
+                if (item.uploaderAvatarUrl.isNotEmpty()) {
                     AsyncImage(
                         model = item.uploaderAvatarUrl,
                         contentDescription = item.uploaderName,
