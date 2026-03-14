@@ -14,29 +14,35 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.nidoham.bondhu.player.state.PlayerUiState
 import kotlinx.coroutines.delay
 
 /**
- * Composable that wires a Media3 [PlayerView] to the service-owned [ExoPlayer]
+ * Composable that wires a Media3 [PlayerView] to the service-owned [Player]
  * and layers all control overlays on top via [PlayerControlsOverlay].
  *
+ * The [player] parameter is typed as [Player] — the stable Media3 interface —
+ * rather than `ExoPlayer`. At runtime it is backed by
+ * [androidx.media3.session.MediaBrowser], which implements [Player].
+ * [PlayerView.setPlayer] accepts [Player] directly so no cast is needed.
+ *
  * ## Position and duration
- * [PlayerService] already polls [ExoPlayer.currentPosition] and [ExoPlayer.duration]
+ * [PlayerService] already polls [Player.currentPosition] and [Player.duration]
  * every 500 ms and writes the results into [PlayerUiState.currentPositionMs] and
  * [PlayerUiState.durationMs]. This composable reads those values directly from
  * [uiState] — no duplicate polling is performed here.
  *
  * ## Buffered position
- * [ExoPlayer.bufferedPosition] is not tracked in [PlayerUiState], so a lightweight
+ * [Player.bufferedPosition] is not tracked in [PlayerUiState], so a lightweight
  * 500 ms local poll is kept for [bufferedMs] only.
  *
  * @param uiState            Current player phase and metadata.
- * @param player             ExoPlayer instance owned by [PlayerService]; null until binding completes.
+ * @param player             [Player] instance exposed by [PlayerViewModel];
+ *                           null until the MediaBrowser session is connected.
  * @param isLandscape        Forwarded to overlay children for inset-aware layout.
  * @param onBack             Back/collapse navigation callback.
  * @param onPlay             Service play callback.
@@ -51,7 +57,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun PlayerVideoSurface(
     uiState            : PlayerUiState,
-    player             : ExoPlayer?,
+    player             : Player?,
     isLandscape        : Boolean,
     onBack             : () -> Unit,
     onPlay             : () -> Unit,
@@ -64,6 +70,7 @@ fun PlayerVideoSurface(
 ) {
     var bufferedMs by remember { mutableLongStateOf(0L) }
 
+    // bufferedPosition is defined on the Player interface — no cast needed.
     LaunchedEffect(player) {
         while (player != null) {
             bufferedMs = player.bufferedPosition.coerceAtLeast(0L)
@@ -85,6 +92,7 @@ fun PlayerVideoSurface(
                     resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
             },
+            // PlayerView.setPlayer() accepts Player — no cast required.
             update   = { view -> view.player = player },
             modifier = Modifier.fillMaxSize(),
         )

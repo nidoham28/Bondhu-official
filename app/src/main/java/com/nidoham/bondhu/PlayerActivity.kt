@@ -4,6 +4,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -30,14 +31,20 @@ import dagger.hilt.android.AndroidEntryPoint
  *
  * Reads [NavigationHelper.EXTRA_STREAM_URL] and [NavigationHelper.EXTRA_TITLE]
  * from the intent and delegates all extraction and playback to [PlayerService]
- * through [PlayerViewModel]. The activity itself is intentionally thin: it
- * manages orientation, system UI visibility, and wires the Compose tree.
+ * through [PlayerViewModel]. The activity is intentionally thin — it manages
+ * orientation, system UI visibility, and wires the Compose tree.
  *
- * ## Orientation behaviour
+ * ## Player type
+ * [player] is typed as [androidx.media3.common.Player] (not `ExoPlayer`) because
+ * [PlayerViewModel] exposes [androidx.media3.session.MediaBrowser], which
+ * implements [androidx.media3.common.Player]. [PlayerScreen] receives
+ * [androidx.media3.common.Player] directly — no cast required.
+ *
+ * ## Orientation behavior
  * Portrait shows the standard layout with system bars visible. Landscape hides
  * all system bars via [WindowInsetsControllerCompat] for a true immersive
- * experience. [WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON] prevents
- * the display from dimming during playback in either orientation.
+ * experience. [WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON] prevents the
+ * display from dimming during playback in either orientation.
  *
  * ## Config changes
  * `orientation`, `screenSize`, `screenLayout`, and `smallestScreenSize` are
@@ -63,11 +70,11 @@ class PlayerActivity : BaseActivity() {
 
         setContent {
             AppTheme {
-                val uiState     by viewModel.uiState.collectAsStateWithLifecycle()
-                val player      by viewModel.player.collectAsStateWithLifecycle()
-                val isLandscape  = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val uiState    by viewModel.uiState.collectAsStateWithLifecycle()
+                val player     by viewModel.player.collectAsStateWithLifecycle()
+                val isLandscape = LocalConfiguration.current.orientation ==
+                        Configuration.ORIENTATION_LANDSCAPE
 
-                // Created once; systemBarsBehavior set at construction — not on every orientation change.
                 val insetsController = remember {
                     WindowInsetsControllerCompat(window, window.decorView).apply {
                         systemBarsBehavior =
@@ -84,6 +91,10 @@ class PlayerActivity : BaseActivity() {
                     viewModel.initPlayer(streamUrl, title)
                 }
 
+                BackHandler(enabled = isLandscape) {
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -94,8 +105,9 @@ class PlayerActivity : BaseActivity() {
                         player             = player,
                         isLandscape        = isLandscape,
                         onBack             = {
-                            if (isLandscape) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            else             finish()
+                            if (isLandscape) requestedOrientation =
+                                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            else finish()
                         },
                         onPlay             = viewModel::play,
                         onPause            = viewModel::pause,

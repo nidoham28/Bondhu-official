@@ -3,8 +3,8 @@ package com.nidoham.bondhu.player
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.wifi.WifiManager
-import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.annotation.OptIn
@@ -30,8 +30,17 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionCommands
+import androidx.media3.session.SessionResult
+import com.google.common.collect.ImmutableList
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.nidoham.bondhu.PlayerActivity
 import com.nidoham.bondhu.player.state.PlayerUiState
 import com.nidoham.bondhu.player.state.VideoQuality
@@ -42,6 +51,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -56,36 +66,53 @@ import javax.inject.Inject
 
 /**
  * Foreground service that owns the [ExoPlayer] instance and manages the full
- * stream lifecycle: metadata extraction → URL resolution → playback.
+ * stream lifecycle: metadata extraction -> URL resolution -> playback.
  *
- * ## Auto-stop fix
- * [setSessionActivity] is set on [MediaSession] pointing to [PlayerActivity],
- * giving `DefaultMediaNotificationProvider` a valid foreground `PendingIntent`.
- * [onTaskRemoved] only calls [stopSelf] when the player is genuinely idle.
+ * ## MediaLibraryService
+ * Extends [MediaLibraryService] (a superset of `MediaSessionService`) to satisfy
+ * the Media3 browse/search protocol. [libraryCallback] exposes a minimal root-only
+ * browse tree — sufficient for lock-screen controls and Android Auto without
+ * requiring a full content library.
+ *
+ * ## State broadcasting
+ * Whenever [_uiState] changes, [broadcastState] serializes the new snapshot into
+ * a [Bundle] and pushes it to all connected [androidx.media3.session.MediaBrowser]
+ * clients via [MediaLibrarySession.setSessionExtras]. Clients deserialize via
+ * [PlayerUiState.fromBundle].
+ *
+ * ## Custom commands
+ * [CMD_SET_QUALITY] and [CMD_RETRY] are registered in [onConnect] and dispatched
+ * in [onCustomCommand], replacing the old `PlayerBinder` IPC approach with the
+ * official [SessionCommand] protocol.
  *
  * ## Audio + Video merging
  * Separate video-only and audio-only progressive streams are combined via
- * [MergingMediaSource]. HLS/DASH manifests carry multiplexed tracks and are
- * handed directly to [DefaultMediaSourceFactory].
+ * [MergingMediaSource]. HLS/DASH manifests are handed directly to
+ * [DefaultMediaSourceFactory] which handles multiplexed tracks internally.
  *
- * Resolution priority: HLS → DASH → Merged (video + audio) → AudioOnly.
+ * Resolution priority: HLS -> DASH -> Merged (video + audio) -> AudioOnly.
  *
  * ## Quality selection
  * [setQuality] replaces the video track while preserving [currentAudioUrl] and
  * the current seek position. Quality options are sourced from
  * [Streams.videoOnlyStreams], sorted highest-first.
+ *
+ * ## Player listener batching
+ * [Player.Listener.onEvents] batches all property changes that fire in the same
+ * message-queue turn into a single [_uiState] write, avoiding redundant
+ * [broadcastState] emissions on simultaneous state transitions.
  */
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
-class PlayerService : MediaSessionService() {
+class PlayerService : MediaLibraryService() {
 
     @Inject lateinit var streamExtractor: StreamExtractor
 
-    // ── ExoPlayer + MediaSession ──────────────────────────────────────────
+    // ── ExoPlayer + MediaLibrarySession ───────────────────────────────────
 
     lateinit var exoPlayer: ExoPlayer
         private set
-    private lateinit var mediaSession: MediaSession
+    private lateinit var mediaLibrarySession: MediaLibrarySession
 
     // ── Media source factories ────────────────────────────────────────────
 
@@ -112,26 +139,56 @@ class PlayerService : MediaSessionService() {
 
     // ── Coroutines ────────────────────────────────────────────────────────
 
-    // Dispatchers.Main.immediate avoids a redundant post when already on Main.
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Cast required: Dispatchers.Main is statically typed as CoroutineDispatcher,
+    // but on Android it is always a MainCoroutineDispatcher at runtime.
+    // The .immediate sub-dispatcher avoids a redundant post when already on Main.
+    private val serviceScope = CoroutineScope(
+        SupervisorJob() + (Dispatchers.Main as MainCoroutineDispatcher).immediate
+    )
     private var loadJob: Job? = null
     private var progressJob: Job? = null
 
-    private var currentUrl: String = ""
-
-    // ── Binder ────────────────────────────────────────────────────────────
-
-    inner class PlayerBinder : Binder() {
-        fun getService(): PlayerService = this@PlayerService
-    }
-
-    private val binder = PlayerBinder()
+    /**
+     * Last URL submitted via [loadAndPlay]. Read by [libraryCallback] to
+     * resubmit on [CMD_RETRY] without an extra field in the callback closure.
+     */
+    var lastStreamUrl: String = ""
+        private set
 
     // ── Companion ─────────────────────────────────────────────────────────
 
     companion object {
 
-        const val ACTION_BIND = "com.nidoham.bondhu.player.ACTION_BIND"
+        /** Stable root media ID for the browse tree. */
+        private const val ROOT_ID = "com.nidoham.bondhu.player.ROOT"
+
+        // ── Custom SessionCommand actions ──────────────────────────────────
+
+        /** Custom [SessionCommand] action: switch video quality. */
+        const val CMD_SET_QUALITY   = "com.nidoham.bondhu.player.CMD_SET_QUALITY"
+
+        /** Custom [SessionCommand] action: retry after error. */
+        const val CMD_RETRY         = "com.nidoham.bondhu.player.CMD_RETRY"
+
+        /** Bundle key for the quality index argument in [CMD_SET_QUALITY]. */
+        const val ARG_QUALITY_INDEX = "quality_index"
+
+        // ── SessionExtras / PlayerUiState bundle keys ──────────────────────
+
+        const val KEY_PHASE            = "phase"
+        const val KEY_TITLE            = "title"
+        const val KEY_UPLOADER_NAME    = "uploader_name"
+        const val KEY_UPLOADER_URL     = "uploader_url"
+        const val KEY_THUMBNAIL_URL    = "thumbnail_url"
+        const val KEY_DURATION_MS      = "duration_ms"
+        const val KEY_CURRENT_POS_MS   = "current_pos_ms"
+        const val KEY_ERROR            = "error"
+        const val KEY_QUALITY_LABELS   = "quality_labels"
+        const val KEY_QUALITY_HEIGHTS  = "quality_heights"
+        const val KEY_QUALITY_URLS     = "quality_urls"
+        const val KEY_SELECTED_QUALITY = "selected_quality"
+
+        // ── Buffer / network tuning ────────────────────────────────────────
 
         private const val MIN_BUFFER_MS                         = 15_000
         private const val MAX_BUFFER_MS                         = 50_000
@@ -147,8 +204,8 @@ class PlayerService : MediaSessionService() {
          * non-browser requests; avoids 403/429 responses on stream URLs.
          */
         private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36" +
+                    " (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
         @Volatile private var sharedCache: SimpleCache? = null
 
@@ -167,26 +224,121 @@ class PlayerService : MediaSessionService() {
         }
     }
 
+    // ── MediaLibrarySession.Callback ──────────────────────────────────────
+
+    /**
+     * Handles the Media3 browse protocol and custom [SessionCommand] dispatch.
+     *
+     * [onConnect] builds a [SessionCommands] set that includes only the two
+     * custom actions this service supports. The API no longer provides a
+     * pre-built "all default commands" constant — building from scratch is the
+     * correct pattern in current Media3.
+     *
+     * [onCustomCommand] dispatches each registered action to the appropriate
+     * service method, replacing the old `PlayerBinder` IPC approach entirely.
+     *
+     * [onGetLibraryRoot] returns a single root node so browse-protocol clients
+     * (Android Auto, WearOS) can complete a session handshake without error.
+     * This service exposes no content library — [onGetChildren] returns an
+     * empty list and [onGetItem] returns [LibraryResult.RESULT_ERROR_NOT_SUPPORTED].
+     */
+    private val libraryCallback = object : MediaLibrarySession.Callback {
+
+        override fun onConnect(
+            session   : MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            // SessionCommands.Builder starts empty; add each custom command explicitly.
+            // DEFAULT_SESSION_AND_PLAYER_COMMANDS was removed from the public API —
+            // constructing the set from scratch is the current correct pattern.
+            val sessionCommands = SessionCommands.Builder()
+                .add(SessionCommand(CMD_SET_QUALITY, Bundle.EMPTY))
+                .add(SessionCommand(CMD_RETRY,       Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(sessionCommands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session      : MediaSession,
+            controller   : MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args         : Bundle,
+        ): ListenableFuture<SessionResult> {
+            when (customCommand.customAction) {
+                CMD_SET_QUALITY -> {
+                    val index = args.getInt(ARG_QUALITY_INDEX, -1)
+                    if (index >= 0) setQuality(index)
+                }
+                CMD_RETRY -> {
+                    if (lastStreamUrl.isNotBlank()) {
+                        loadAndPlay(
+                            pageUrl = lastStreamUrl,
+                            title   = _uiState.value.title.takeIf { it.isNotBlank() },
+                        )
+                    }
+                }
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
+
+        override fun onGetLibraryRoot(
+            session : MediaLibrarySession,
+            browser : MediaSession.ControllerInfo,
+            params  : LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(
+                LibraryResult.ofItem(
+                    MediaItem.Builder().setMediaId(ROOT_ID).build(),
+                    params,
+                )
+            )
+
+        override fun onGetChildren(
+            session  : MediaLibrarySession,
+            browser  : MediaSession.ControllerInfo,
+            parentId : String,
+            page     : Int,
+            pageSize : Int,
+            params   : LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+            Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.of(), params))
+
+        override fun onGetItem(
+            session : MediaLibrarySession,
+            browser : MediaSession.ControllerInfo,
+            mediaId : String,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(
+                LibraryResult.ofError(LibraryResult.RESULT_ERROR_NOT_SUPPORTED)
+            )
+    }
+
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
         initPlayer()
         acquireLocks()
+        // Collect _uiState and push every change to connected MediaBrowser clients.
+        serviceScope.launch {
+            _uiState.collect { broadcastState(it) }
+        }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession =
-        mediaSession
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession =
+        mediaLibrarySession
 
     override fun onBind(intent: Intent?): IBinder? =
-        if (intent?.action == ACTION_BIND) binder else super.onBind(intent)
+        super.onBind(intent)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         val url   = intent?.getStringExtra(NavigationHelper.EXTRA_STREAM_URL)
             ?: return START_NOT_STICKY
         val title = intent.getStringExtra(NavigationHelper.EXTRA_TITLE)
-        if (url != currentUrl) loadAndPlay(url, title)
+        if (url != lastStreamUrl) loadAndPlay(url, title)
         return START_NOT_STICKY
     }
 
@@ -199,9 +351,8 @@ class PlayerService : MediaSessionService() {
         stopProgressUpdates()
         loadJob?.cancel()
         serviceScope.cancel()
-        mediaSession.release()
-        // release() stops playback and frees all resources internally;
-        // explicit stop()/clearMediaItems() before it are redundant.
+        mediaLibrarySession.release()
+        // release() stops playback and frees all resources internally.
         exoPlayer.release()
         super.onDestroy()
     }
@@ -260,8 +411,7 @@ class PlayerService : MediaSessionService() {
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
-                    // AUDIO_CONTENT_TYPE_MOVIE is correct for video-with-audio content;
-                    // MUSIC was semantically wrong and can affect audio focus behaviour.
+                    // AUDIO_CONTENT_TYPE_MOVIE is correct for video-with-audio content.
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build(),
                 /* handleAudioFocus = */ true,
@@ -275,7 +425,7 @@ class PlayerService : MediaSessionService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        mediaSession = MediaSession.Builder(this, exoPlayer)
+        mediaLibrarySession = MediaLibrarySession.Builder(this, exoPlayer, libraryCallback)
             .setSessionActivity(sessionActivity)
             .build()
 
@@ -288,7 +438,7 @@ class PlayerService : MediaSessionService() {
             ?.also { it.acquire(3 * 60 * 60 * 1000L) }
 
         // WIFI_MODE_FULL_HIGH_PERF is deprecated from API 29.
-        // WIFI_MODE_FULL_LOW_LATENCY is the current replacement on Q+.
+        // WIFI_MODE_FULL_LOW_LATENCY is the correct replacement on Q+.
         val wifiLockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             WifiManager.WIFI_MODE_FULL_LOW_LATENCY
         else
@@ -310,18 +460,15 @@ class PlayerService : MediaSessionService() {
     fun pause() { exoPlayer.pause() }
     fun seekTo(positionMs: Long) { exoPlayer.seekTo(positionMs) }
 
-    @Suppress("unused")
     fun togglePlayPause() {
         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
     }
 
-    @Suppress("unused")
     fun skipForward(deltaMs: Long = 10_000L) {
         val cap = exoPlayer.duration.takeIf { it != C.TIME_UNSET } ?: return
         exoPlayer.seekTo((exoPlayer.currentPosition + deltaMs).coerceAtMost(cap))
     }
 
-    @Suppress("unused")
     fun skipBackward(deltaMs: Long = 10_000L) {
         exoPlayer.seekTo((exoPlayer.currentPosition - deltaMs).coerceAtLeast(0L))
     }
@@ -339,7 +486,6 @@ class PlayerService : MediaSessionService() {
     fun setQuality(index: Int) {
         val quality  = _uiState.value.availableQualities.getOrNull(index) ?: return
         val audioUrl = currentAudioUrl.takeIf { it.isNotBlank() } ?: return
-
         val savedPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
 
         val merged = MergingMediaSource(
@@ -375,7 +521,7 @@ class PlayerService : MediaSessionService() {
      */
     fun loadAndPlay(pageUrl: String, title: String?) {
         loadJob?.cancel()
-        currentUrl      = pageUrl
+        lastStreamUrl   = pageUrl
         currentAudioUrl = ""
 
         loadJob = serviceScope.launch {
@@ -391,7 +537,7 @@ class PlayerService : MediaSessionService() {
                 streamExtractor.fetchStream(pageUrl)
             }
 
-            // Back on Dispatchers.Main.immediate here — safe to touch ExoPlayer.
+            // Back on Main.immediate here — safe to touch ExoPlayer.
             result
                 .onSuccess { data ->
                     val source = data.stream.resolvePlaybackSource()
@@ -471,6 +617,38 @@ class PlayerService : MediaSessionService() {
         }
     }
 
+    // ── State broadcasting ────────────────────────────────────────────────
+
+    /**
+     * Serializes [state] into a [Bundle] and pushes it to all connected
+     * [androidx.media3.session.MediaBrowser] clients via
+     * [MediaLibrarySession.setSessionExtras].
+     *
+     * Invoked automatically from the [_uiState] collector started in [onCreate].
+     * Runs on [MainCoroutineDispatcher.immediate] — safe to call [setSessionExtras]
+     * here without posting to a different thread.
+     *
+     * @param state The latest [PlayerUiState] snapshot to broadcast.
+     */
+    private fun broadcastState(state: PlayerUiState) {
+        val qualities = state.availableQualities
+        val extras = Bundle().apply {
+            putString(KEY_PHASE,           state.phase.name)
+            putString(KEY_TITLE,           state.title)
+            putString(KEY_UPLOADER_NAME,   state.uploaderName)
+            putString(KEY_UPLOADER_URL,    state.uploaderUrl)
+            putString(KEY_THUMBNAIL_URL,   state.thumbnailUrl)
+            putLong  (KEY_DURATION_MS,     state.durationMs)
+            putLong  (KEY_CURRENT_POS_MS,  state.currentPositionMs)
+            putString(KEY_ERROR,           state.error)
+            putInt   (KEY_SELECTED_QUALITY,state.selectedQualityIndex)
+            putStringArray(KEY_QUALITY_LABELS,  qualities.map { it.label }.toTypedArray())
+            putIntArray   (KEY_QUALITY_HEIGHTS, qualities.map { it.height }.toIntArray())
+            putStringArray(KEY_QUALITY_URLS,    qualities.map { it.videoUrl }.toTypedArray())
+        }
+        mediaLibrarySession.setSessionExtras(extras)
+    }
+
     // ── Progress polling ──────────────────────────────────────────────────
 
     private fun startProgressUpdates() {
@@ -500,35 +678,43 @@ class PlayerService : MediaSessionService() {
     private fun setupPlayerListener() {
         exoPlayer.addListener(object : Player.Listener {
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
-                if (isPlaying) startProgressUpdates() else stopProgressUpdates()
-            }
+            /**
+             * Batches all player property changes that fire in the same
+             * message-queue turn into a single [_uiState] write, preventing
+             * redundant [broadcastState] emissions when multiple events fire
+             * together (e.g. STATE_READY + isPlaying on seek-resume).
+             */
+            override fun onEvents(player: Player, events: Player.Events) {
+                var state = _uiState.value
 
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                when (playbackState) {
-                    Player.STATE_BUFFERING -> {
-                        _uiState.value = _uiState.value.copy(isBuffering = true)
-                    }
-                    Player.STATE_READY -> {
-                        val rawDuration = exoPlayer.duration.takeIf { it != C.TIME_UNSET }
-                        _uiState.value = _uiState.value.copy(
-                            isBuffering = false,
-                            durationMs  = rawDuration?.coerceAtLeast(0L)
-                                ?: _uiState.value.durationMs,
-                        )
-                    }
-                    Player.STATE_ENDED -> {
-                        _uiState.value = _uiState.value.copy(
+                if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
+                    state = state.copy(isPlaying = player.isPlaying)
+                    if (player.isPlaying) startProgressUpdates() else stopProgressUpdates()
+                }
+
+                if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                    state = when (player.playbackState) {
+                        Player.STATE_BUFFERING -> state.copy(isBuffering = true)
+                        Player.STATE_READY     -> {
+                            val rawDuration = player.duration.takeIf { it != C.TIME_UNSET }
+                            state.copy(
+                                isBuffering = false,
+                                durationMs  = rawDuration?.coerceAtLeast(0L) ?: state.durationMs,
+                            )
+                        }
+                        Player.STATE_ENDED     -> state.copy(
                             isPlaying         = false,
                             isBuffering       = false,
                             currentPositionMs = 0L,
                         )
-                    }
-                    Player.STATE_IDLE -> {
-                        _uiState.value = _uiState.value.copy(isBuffering = false)
+                        Player.STATE_IDLE      -> state.copy(isBuffering = false)
+                        else                   -> state
                     }
                 }
+
+                // Referential check avoids a StateFlow emit + broadcastState call
+                // when nothing actually changed.
+                if (state !== _uiState.value) _uiState.value = state
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -584,15 +770,12 @@ private fun Streams.resolvePlaybackSource(): PlaybackSource? {
         return PlaybackSource.Merged(bestVideoUrl, bestAudioUrl)
     }
 
-    // Simplified single-expression: no null AudioOnly possible here.
     return bestAudioUrl?.let { PlaybackSource.AudioOnly(it) }
 }
 
 // ── Quality list builder ──────────────────────────────────────────────────────
 
 private fun buildQualityList(streams: Streams): List<VideoQuality> =
-// videoOnlyStreams matches the source used in resolvePlaybackSource;
-    // the original videoStreams reference was an inconsistency.
     streams.videoOnlyStreams
         .filter { it.content.isNotBlank() && it.height > 0 }
         .groupBy { it.height }

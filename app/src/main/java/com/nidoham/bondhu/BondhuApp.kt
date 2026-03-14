@@ -27,20 +27,18 @@ class BondhuApp : Application() {
     @Inject
     lateinit var presenceManager: PresenceManager
 
-    /** Application-wide scope; [SupervisorJob] ensures one failure does not cancel siblings. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize presence tracking immediately so the init block inside
-        // PresenceManager runs as early as possible after Hilt injection.
-        presenceManager.initialize()
-        Downloader.init(this)
-
+        // Plant first — ensures logs from all subsequent init calls are captured.
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
+
+        presenceManager.initialize()
+        Downloader.init(this)
 
         appScope.launch {
             runCatching { ImgBBStorage.apiKey() }

@@ -4,11 +4,18 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
-import android.os.IBinder
+import android.os.Bundle
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.session.MediaBrowser
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import com.nidoham.bondhu.player.PlayerService
 import com.nidoham.bondhu.player.state.PlayerUiState
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
@@ -24,36 +31,35 @@ import javax.inject.Inject
 /**
  * ViewModel for [com.nidoham.bondhu.PlayerActivity].
  *
- * Manages the binding lifecycle for [PlayerService] and bridges its state to
- * Compose UI via [StateFlow]s. [AndroidViewModel] is used intentionally —
- * starting a foreground service and binding to it both require an [Application]
- * context that must outlive any single activity.
+ * Replaces the previous `ServiceConnection` + `PlayerBinder` approach with
+ * [MediaBrowser] — the official Media3 client for
+ * [androidx.media3.session.MediaLibraryService].
  *
- * ## Service binding
- * [initPlayer] starts the service via [startForegroundService], then binds
- * using [PlayerService.ACTION_BIND]. That action causes [PlayerService.onBind]
- * to return a [PlayerService.PlayerBinder] rather than delegating to the
- * Media3 session path inside [androidx.media3.session.MediaSessionService].
+ * [MediaBrowser] implements [Player], so it is passed directly to
+ * `PlayerView` without exposing `ExoPlayer` across the process boundary.
  *
- * Binding registration is tracked by [isBindingRegistered], which is set
- * immediately after [Context.bindService] succeeds. This is distinct from
- * [playerService] being non-null (the connection being active), so that
- * [onCleared] can safely call [Context.unbindService] even after
- * [ServiceConnection.onServiceDisconnected] fires due to a service crash.
+ * ## State architecture
+ * [PlayerUiState] is assembled from two independent sources:
  *
- * ## State bridging
- * Once bound, a collection job mirrors [PlayerService.uiState] into [uiState].
- * [player] exposes the [ExoPlayer] instance for wiring into a PlayerView.
+ * - **[Player.Listener.onEvents]** — standard playback state that [MediaBrowser]
+ *   delivers synchronously (playing, buffering, duration).
+ *
+ * - **[MediaBrowser.Listener.onExtrasChanged]** — custom service state
+ *   (loading phase, title, uploader info, quality list, error) broadcast by
+ *   [PlayerService] via `mediaLibrarySession.setSessionExtras(bundle)`.
+ *   [PlayerUiState.fromBundle] deserializes it.
  *
  * ## Quality selection
- * [setQuality] delegates to [PlayerService.setQuality]. The call is a no-op
- * when the active source is HLS/DASH (i.e. [PlayerUiState.availableQualities]
- * is empty), since adaptive bitrate handles quality internally in those cases.
+ * Delegated as a [SessionCommand] with [PlayerService.CMD_SET_QUALITY].
  *
- * ## Service lifetime
- * The service is unbound in [onCleared] but is not stopped — playback continues
- * in the background. The notification dismiss action inside [PlayerService]
- * is responsible for calling [stopSelf].
+ * ## Retry
+ * Sent as [PlayerService.CMD_RETRY], bypassing the URL-deduplication guard
+ * in [PlayerService.onStartCommand].
+ *
+ * ## Connection lifecycle
+ * [MediaBrowser.releaseFuture] in [onCleared] safely handles both the pending
+ * and resolved future cases. The ViewModel does NOT stop the service on clear —
+ * playback continues in the background.
  *
  * @param application Application context passed through [AndroidViewModel].
  */
@@ -62,141 +68,207 @@ class PlayerViewModel @Inject constructor(
     application: Application,
 ) : AndroidViewModel(application) {
 
-    // ── UI state (mirrored from service) ──────────────────────────────────────
+    // ── UI state ──────────────────────────────────────────────────────────────
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
-    // ── ExoPlayer instance (exposed for PlayerView wiring) ────────────────────
+    // ── Player (MediaBrowser implements Player) ────────────────────────────────
 
-    private val _player = MutableStateFlow<ExoPlayer?>(null)
-    val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
+    private val _player = MutableStateFlow<Player?>(null)
+    val player: StateFlow<Player?> = _player.asStateFlow()
 
-    // ── Service binding ───────────────────────────────────────────────────────
+    // ── MediaBrowser ──────────────────────────────────────────────────────────
 
-    private var playerService: PlayerService? = null
+    private var mediaBrowserFuture: ListenableFuture<MediaBrowser>? = null
 
-    /**
-     * Tracks whether [Context.bindService] has been called and the binding is
-     * still registered. Set to `true` immediately after [bindService] returns
-     * successfully and cleared only after [Context.unbindService] is called.
-     *
-     * This must not be set inside [ServiceConnection.onServiceConnected], because
-     * [ServiceConnection.onServiceDisconnected] resets the connection state on a
-     * service crash while the binding itself remains registered. Using the callback
-     * to gate [unbindService] would cause a binding leak on crash + ViewModel clear.
-     */
-    private var isBindingRegistered: Boolean = false
+    private inline val browser: MediaBrowser?
+        get() = mediaBrowserFuture
+            ?.takeIf { it.isDone && !it.isCancelled }
+            ?.runCatching { get() }
+            ?.getOrNull()
 
     private var stateJob: Job? = null
 
-    /** Preserved so [retry] can resubmit the original page URL. */
-    private var lastStreamUrl: String = ""
+    // ── Listeners ─────────────────────────────────────────────────────────────
 
-    private val connection = object : ServiceConnection {
+    /**
+     * Derives standard playback state from [MediaBrowser] using [Player.Listener.onEvents]
+     * batching — one [_uiState] write per message-queue turn regardless of how
+     * many individual events fire together.
+     */
+    private val playerListener = object : Player.Listener {
 
-        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val service = (binder as PlayerService.PlayerBinder).getService()
-            playerService = service
-            _player.value = service.exoPlayer
+        override fun onEvents(player: Player, events: Player.Events) {
+            var state = _uiState.value
 
-            // Cancel any stale collection job before starting a new one.
-            stateJob?.cancel()
-            stateJob = viewModelScope.launch {
-                service.uiState.collect { _uiState.value = it }
+            if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
+                state = state.copy(isPlaying = player.isPlaying)
             }
-            Timber.d("PlayerService bound")
+
+            if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                state = when (player.playbackState) {
+                    Player.STATE_BUFFERING -> state.copy(isBuffering = true)
+                    Player.STATE_READY     -> state.copy(
+                        isBuffering = false,
+                        durationMs  = player.duration
+                            .takeIf { it != C.TIME_UNSET }
+                            ?.coerceAtLeast(0L)
+                            ?: state.durationMs,
+                    )
+                    Player.STATE_ENDED     -> state.copy(
+                        isPlaying         = false,
+                        isBuffering       = false,
+                        currentPositionMs = 0L,
+                    )
+                    Player.STATE_IDLE      -> state.copy(isBuffering = false)
+                    else                   -> state
+                }
+            }
+
+            if (state !== _uiState.value) _uiState.value = state
         }
 
-        override fun onServiceDisconnected(name: ComponentName) {
-            // The service has crashed or been killed. The binding is still
-            // registered — do NOT set isBindingRegistered = false here.
-            // onCleared() will call unbindService() when the ViewModel is cleared.
-            playerService = null
+        override fun onPlayerError(error: PlaybackException) {
+            Timber.e(error, "Player error via MediaBrowser [code=${error.errorCode}]")
+            _uiState.value = _uiState.value.copy(
+                phase = PlayerUiState.Phase.Error,
+                error = error.localizedMessage ?: "Playback error.",
+            )
+        }
+    }
+
+    /**
+     * Receives custom service state broadcast by [PlayerService] via
+     * `mediaLibrarySession.setSessionExtras(bundle)`.
+     *
+     * Merges service-owned fields into [_uiState] while preserving the
+     * already-settled [PlayerUiState.isPlaying] and [PlayerUiState.isBuffering]
+     * from [playerListener] to avoid stale overrides.
+     */
+    private val browserListener = object : MediaBrowser.Listener {
+
+        override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
+            _uiState.value = PlayerUiState.fromBundle(extras).copy(
+                isPlaying   = _uiState.value.isPlaying,
+                isBuffering = _uiState.value.isBuffering,
+            )
+        }
+
+        override fun onDisconnected(controller: MediaController) {
             _player.value = null
-            stateJob?.cancel()
-            Timber.d("PlayerService disconnected unexpectedly")
+            Timber.w("MediaBrowser disconnected from PlayerService")
         }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Starts [PlayerService] as a foreground service and binds to it. Safe to
-     * call on activity recreation — if a binding is already registered the call
-     * is ignored, and the service itself deduplicates loads for the same URL.
+     * Starts [PlayerService] as a foreground service and connects [MediaBrowser]
+     * to its [androidx.media3.session.MediaLibraryService.MediaLibrarySession].
+     *
+     * Safe to call on every activity creation — the service deduplicates loads
+     * for the same URL and the [MediaBrowser] connection is established only once
+     * per ViewModel lifetime.
      *
      * @param streamUrl YouTube page URL forwarded to the service for extraction.
-     * @param title     Optional display title used while stream metadata loads.
+     * @param title     Optional display title shown while stream metadata loads.
      */
     fun initPlayer(streamUrl: String, title: String?) {
-        lastStreamUrl = streamUrl
         val context = getApplication<Application>()
-
         context.startForegroundService(buildServiceIntent(context, streamUrl, title))
 
-        // Guard against accumulating duplicate bindings on activity recreation.
-        if (isBindingRegistered) return
+        if (mediaBrowserFuture != null) return
 
-        val bindIntent = Intent(context, PlayerService::class.java).apply {
-            action = PlayerService.ACTION_BIND
-        }
-        if (context.bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)) {
-            isBindingRegistered = true
-        } else {
-            Timber.e("bindService returned false — PlayerService unavailable")
-        }
+        val sessionToken = SessionToken(
+            context,
+            ComponentName(context, PlayerService::class.java),
+        )
+
+        val future = MediaBrowser.Builder(context, sessionToken)
+            .setListener(browserListener)
+            .buildAsync()
+
+        mediaBrowserFuture = future
+
+        future.addListener(
+            {
+                val b = runCatching { future.get() }.getOrElse { e ->
+                    Timber.e(e, "MediaBrowser connection failed")
+                    return@addListener
+                }
+                b.addListener(playerListener)
+                _player.value = b
+                Timber.d("MediaBrowser connected to PlayerService")
+            },
+            ContextCompat.getMainExecutor(context),
+        )
     }
 
-    fun play()                   { playerService?.play() }
-    fun pause()                  { playerService?.pause() }
-    fun seekTo(positionMs: Long) { playerService?.seekTo(positionMs) }
+    fun play()  { browser?.play() }
+    fun pause() { browser?.pause() }
+    fun seekTo(positionMs: Long) { browser?.seekTo(positionMs) }
+
+    fun togglePlayPause() {
+        val b = browser ?: return
+        if (b.isPlaying) b.pause() else b.play()
+    }
+
+    fun skipForward(deltaMs: Long = 10_000L) {
+        val b   = browser ?: return
+        val cap = b.duration.takeIf { it != C.TIME_UNSET } ?: return
+        b.seekTo((b.currentPosition + deltaMs).coerceAtMost(cap))
+    }
+
+    fun skipBackward(deltaMs: Long = 10_000L) {
+        val b = browser ?: return
+        b.seekTo((b.currentPosition - deltaMs).coerceAtLeast(0L))
+    }
 
     /**
      * Switches the active video stream to the quality at [index] in
-     * [PlayerUiState.availableQualities]. Playback position is preserved
-     * seamlessly inside [PlayerService.setQuality].
+     * [PlayerUiState.availableQualities] via a [SessionCommand].
      *
-     * No-op when [playerService] is null or the quality list is empty
-     * (HLS/DASH sources use adaptive bitrate automatically).
+     * No-op when the quality list is empty (HLS/DASH sources manage quality
+     * internally via adaptive bitrate).
      *
      * @param index Index into [PlayerUiState.availableQualities].
      */
-    fun setQuality(index: Int) { playerService?.setQuality(index) }
+    fun setQuality(index: Int) {
+        browser?.sendCustomCommand(
+            SessionCommand(PlayerService.CMD_SET_QUALITY, Bundle.EMPTY),
+            Bundle().apply { putInt(PlayerService.ARG_QUALITY_INDEX, index) },
+        )
+    }
 
     /**
-     * Resubmits [lastStreamUrl] to [PlayerService] when the player is in an
-     * error state. Uses the original page URL rather than the resolved title,
-     * which is not a valid stream URL.
+     * Retries extraction and playback after an error via a [SessionCommand],
+     * bypassing the URL-deduplication guard in [PlayerService.onStartCommand].
      */
     fun retry() {
-        val service = playerService ?: return
-        val state = _uiState.value
-        if (state.phase == PlayerUiState.Phase.Error && lastStreamUrl.isNotBlank()) {
-            service.loadAndPlay(
-                pageUrl = lastStreamUrl,
-                title   = state.title.takeIf { it.isNotBlank() },
-            )
-        }
+        if (_uiState.value.phase != PlayerUiState.Phase.Error) return
+        browser?.sendCustomCommand(
+            SessionCommand(PlayerService.CMD_RETRY, Bundle.EMPTY),
+            Bundle.EMPTY,
+        )
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onCleared() {
-        super.onCleared()
         stateJob?.cancel()
-        if (isBindingRegistered) {
-            getApplication<Application>().unbindService(connection)
-            isBindingRegistered = false
-        }
+        browser?.removeListener(playerListener)
+        mediaBrowserFuture?.let { MediaBrowser.releaseFuture(it) }
+        mediaBrowserFuture = null
+        super.onCleared()
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun buildServiceIntent(
-        context   : Context,
-        streamUrl : String,
-        title     : String?,
+        context  : Context,
+        streamUrl: String,
+        title    : String?,
     ): Intent = Intent(context, PlayerService::class.java).apply {
         putExtra(NavigationHelper.EXTRA_STREAM_URL, streamUrl)
         title?.let { putExtra(NavigationHelper.EXTRA_TITLE, it) }

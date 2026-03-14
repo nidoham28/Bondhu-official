@@ -11,7 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.Player
 import com.nidoham.bondhu.player.state.PlayerUiState
 
 /**
@@ -27,11 +27,13 @@ import com.nidoham.bondhu.player.state.PlayerUiState
  * **Landscape** — [PlayerVideoSurface] expands to fill the entire screen.
  *
  * Both layouts delegate all video rendering and control interaction to
- * [PlayerVideoSurface], which owns the [AndroidView] and the
+ * [PlayerVideoSurface], which owns the `AndroidView` and the
  * [PlayerControlsOverlay].
  *
  * @param uiState            Current player phase and stream metadata.
- * @param player             ExoPlayer instance owned by [PlayerService].
+ * @param player             [Player] instance exposed by [PlayerViewModel];
+ *                           backed by [androidx.media3.session.MediaBrowser]
+ *                           at runtime. Null until the session is connected.
  * @param isLandscape        True when the device is in landscape orientation.
  * @param onBack             Back / collapse navigation.
  * @param onPlay             Service play delegate.
@@ -44,7 +46,7 @@ import com.nidoham.bondhu.player.state.PlayerUiState
 @Composable
 fun PlayerScreen(
     uiState            : PlayerUiState,
-    player             : ExoPlayer?,
+    player             : Player?,
     isLandscape        : Boolean,
     onBack             : () -> Unit,
     onPlay             : () -> Unit,
