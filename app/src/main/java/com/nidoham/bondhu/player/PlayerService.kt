@@ -757,7 +757,8 @@ private fun Streams.resolvePlaybackSource(): PlaybackSource? {
     }
 
     val bestVideoUrl = videoOnlyStreams
-        .maxByOrNull { it.height }
+        .find { it.height == 360 }?.content
+        ?: videoOnlyStreams.maxByOrNull { it.height }
         ?.content
         ?.takeIf { it.isNotBlank() }
 

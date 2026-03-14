@@ -157,10 +157,17 @@ private fun QualityButton(
     selectedQualityIndex : Int,
     onSetQuality         : (Int) -> Unit,
 ) {
-    val isAdaptive = availableQualities.isEmpty()
-    val label      = if (isAdaptive) "Auto"
-    else availableQualities.getOrNull(selectedQualityIndex)?.label ?: "Auto"
+    val filteredQualities = remember(availableQualities) {
+        availableQualities.filter { it.height < 1080 }
+    }
 
+    val isHdSupported = remember(filteredQualities) {
+        filteredQualities.any { it.height >= 720 }
+    }
+
+    val isAdaptive = filteredQualities.isEmpty()
+    val label      = if (isAdaptive) "Auto"
+    else filteredQualities.getOrNull(selectedQualityIndex)?.label ?: "Auto"
     var menuOpen by remember { mutableStateOf(false) }
 
     Box {
@@ -168,11 +175,24 @@ private fun QualityButton(
             onClick = { if (!isAdaptive) menuOpen = true },
             enabled = !isAdaptive,
         ) {
-            Text(
-                text  = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text  = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                )
+                if (isHdSupported) {
+                    Spacer(modifier = Modifier.padding(start = 4.dp))
+                    Text(
+                        text = "HD",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .background(Color.White.copy(alpha = 0.1f), MaterialTheme.shapes.extraSmall)
+                            .padding(horizontal = 2.dp)
+                    )
+                }
+            }
         }
 
         if (!isAdaptive) {
@@ -180,7 +200,7 @@ private fun QualityButton(
                 expanded         = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
-                availableQualities.forEachIndexed { index, quality ->
+                filteredQualities.forEachIndexed { index, quality ->
                     val isSelected = index == selectedQualityIndex
                     DropdownMenuItem(
                         text = {
@@ -192,7 +212,11 @@ private fun QualityButton(
                             )
                         },
                         onClick = {
-                            onSetQuality(index)
+                            // Map the filtered index back to the original availableQualities index
+                            val originalIndex = availableQualities.indexOf(quality)
+                            if (originalIndex != -1) {
+                                onSetQuality(originalIndex)
+                            }
                             menuOpen = false
                         },
                         leadingIcon = {

@@ -3,6 +3,7 @@ package com.nidoham.bondhu.presentation.component.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -35,23 +36,19 @@ import com.nidoham.bondhu.ui.theme.LocalCustomColors
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.util.MessageType
 
-// ─── Instagram colour tokens ──────────────────────────────────────────────────
+// ─── WhatsApp colour tokens ──────────────────────────────────────────────────
 
-/** Instagram DM gradient: indigo-purple → vivid pink, applied left→right. */
-private val IgSentGradient = Brush.linearGradient(
-    colorStops = arrayOf(
-        0.00f to Color(0xFF833AB4),   // Instagram purple
-        0.50f to Color(0xFFC13584),   // mid pink-purple
-        1.00f to Color(0xFFE1306C)    // Instagram hot-pink
-    ),
-    start = Offset(0f, 0f),
-    end   = Offset(Float.POSITIVE_INFINITY, 0f)
-)
+/** WhatsApp-style dark-mode sent bubble: teal-green. */
+private val SentBubbleColorDark = Color(0xFF005C4B) // WhatsApp Dark Sent
+
+/** WhatsApp-style light-mode sent bubble: light green. */
+private val SentBubbleColorLight = Color(0xFFE7FFDB) // WhatsApp Light Sent
+
 
 /**
  * Bubble corner radii for a sent message.
  *
- * Instagram convention: all four corners are heavily rounded except the
+ * WhatsApp convention: all four corners are heavily rounded except the
  * bottom-end (bottom-right in LTR), which carries a small "tail" radius of
  * 4 dp to anchor the bubble visually to the sender side.
  */
@@ -65,14 +62,14 @@ private val SentBubbleShape = RoundedCornerShape(
 // ─── SentMessageWidget ────────────────────────────────────────────────────────
 
 /**
- * Renders a single **sent** (outgoing) message bubble in the Instagram Direct
- * Messages style.
+ * Renders a single **sent** (outgoing) message bubble in a WhatsApp-inspired
+ * style.
  *
  * Responsibilities:
- *  • Applies the Instagram purple→pink gradient background.
- *  • Renders text at a consistent 15 sp regardless of emoji-only content, so
+ *  • Applies a solid teal-green (dark) or light-green (light) background.
+ *  • Renders text at a consistent 16 sp regardless of emoji-only content, so
  *    emojis are treated as inline characters rather than oversized stickers.
- *  • Displays the double-tick read-receipt indicator beneath the last sent
+ *  • Displays the WhatsApp-style double-tick read-receipt beneath the last sent
  *    message in the conversation.
  *  • Exposes an [onTap] callback so the parent can toggle the timestamp chip.
  *
@@ -93,14 +90,17 @@ fun SentMessageWidget(
     bubbleMaxWidth:    Dp,
     onTap:             () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.End) {
+    val isDark = isSystemInDarkTheme()
+    val bubbleColor = if (isDark) SentBubbleColorDark else SentBubbleColorLight
+    val contentColor = if (isDark) Color(0xFFE9EDEF) else Color(0xFF111B21)
 
+    Column(horizontalAlignment = Alignment.End) {
         Box(
             modifier = Modifier
                 .widthIn(min = 60.dp, max = bubbleMaxWidth)
                 .shadow(elevation = 2.dp, shape = SentBubbleShape)
                 .clip(SentBubbleShape)
-                .background(IgSentGradient)
+                .background(bubbleColor)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication        = null,
@@ -109,64 +109,22 @@ fun SentMessageWidget(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             contentAlignment = Alignment.CenterStart
         ) {
-            SentBubbleContent(message)
+            SentBubbleContent(message, contentColor)
         }
 
-        // Read-receipt ticks — shown only under the last sent message once it
-        // has been acknowledged by the server (timestamp != null).
-        if (isLastSentMessage && message.timestamp != null) {
-            Spacer(Modifier.height(3.dp))
-            IgReadReceipt(isRead = isReadByPeer)
-        }
-    }
-}
-
-// ─── Sent Bubble Content ──────────────────────────────────────────────────────
-
-@Composable
-private fun SentBubbleContent(message: Message) {
-    Column {
-        // FIX: message.toType() does not exist on Message. The type field is a
-        //      plain String; compare directly against MessageType enum values.
-        when (message.type) {
-            MessageType.IMAGE.name.lowercase() -> Text(
-                text      = "📷 Photo",
-                style     = MaterialTheme.typography.bodyMedium.copy(
-                    color    = Color.White.copy(alpha = 0.85f),
-                    fontSize = 15.sp
-                ),
-                textAlign = TextAlign.Start
-            )
-            else -> if (message.content.isNotEmpty()) {
-                Text(
-                    text      = message.content,
-                    style     = MaterialTheme.typography.bodyMedium.copy(
-                        color    = Color.White,
-                        fontSize = 15.sp
-                    ),
-                    textAlign = TextAlign.Start
-                )
+        if (isLastSentMessage) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(modifier = Modifier.padding(end = 4.dp)) {
+                WaReadReceipt(isRead = isReadByPeer)
             }
         }
-        // FIX: message.isEdited does not exist on Message. The edited state is
-        //      represented by editedAt: Timestamp?, which is null when unedited.
-        if (message.editedAt != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text  = "edited",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color    = Color.White.copy(alpha = 0.55f),
-                    fontSize = 10.sp
-                )
-            )
-        }
     }
 }
 
-// ─── Instagram-style read receipt ────────────────────────────────────────────
+// ─── WhatsApp-style read receipt ────────────────────────────────────────────
 
 @Composable
-private fun IgReadReceipt(isRead: Boolean) {
+private fun WaReadReceipt(isRead: Boolean) {
     val customColors = LocalCustomColors.current
     val tint = if (isRead) customColors.info else MaterialTheme.colorScheme.outline
 
@@ -184,5 +142,46 @@ private fun IgReadReceipt(isRead: Boolean) {
             tint               = tint,
             modifier           = Modifier.size(14.dp).offset(x = 5.dp)
         )
+    }
+}
+
+// ─── Sent Bubble Content ──────────────────────────────────────────────────────
+
+@Composable
+private fun SentBubbleContent(message: Message, contentColor: Color) {
+    Column {
+        when (message.type) {
+            MessageType.IMAGE.name.lowercase() -> Text(
+                text      = "📷 Photo",
+                style     = MaterialTheme.typography.bodyMedium.copy(
+                    color    = contentColor.copy(alpha = 0.85f),
+                    fontSize = 16.sp
+                ),
+                textAlign = TextAlign.Start
+            )
+            else -> if (message.content.isNotEmpty()) {
+                Text(
+                    text      = message.content,
+                    style     = MaterialTheme.typography.bodyMedium.copy(
+                        color    = contentColor,
+                        fontSize = 16.sp
+                    ),
+                    textAlign = TextAlign.Start
+                )
+            }
+        }
+        // FIX: message.isEdited does not exist on Message. The edited state is
+        //      represented by editedAt: Timestamp?, which is null when unedited.
+        if (message.editedAt != null) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text  = "edited",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color    = contentColor.copy(alpha = 0.55f),
+                    fontSize = 10.sp
+                ),
+                modifier = Modifier.align(Alignment.End)
+            )
+        }
     }
 }

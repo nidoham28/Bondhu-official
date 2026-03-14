@@ -35,7 +35,7 @@ data class PlayerUiState(
     val isPlaying           : Boolean        = false,
     val isBuffering         : Boolean        = false,
     val error               : String?        = null,
-    val availableQualities  : List<VideoQuality> = emptyList(),
+    var availableQualities  : List<VideoQuality> = emptyList(),
     val selectedQualityIndex: Int            = 0,
 ) {
 

@@ -27,18 +27,16 @@ import androidx.compose.ui.unit.sp
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.util.MessageType
 
-// ─── Instagram colour tokens ──────────────────────────────────────────────────
+// ─── WhatsApp colour tokens ──────────────────────────────────────────────────
 
 /**
- * Bubble fill for incoming messages.
+ * Bubble fill for incoming messages (WhatsApp style).
  *
- * Light mode → soft light-grey (#EFEFEF) — matches Instagram's white-background
- * received bubble.
- * Dark  mode → charcoal (#262626) — matches Instagram's dark-mode received
- * bubble on a near-black canvas.
+ * Light mode → Pure White (#FFFFFF)
+ * Dark  mode → Deep Teal/Charcoal (#1F2C34)
  */
-private val ReceivedBubbleColorLight = Color(0xFFEFEFEF)
-private val ReceivedBubbleColorDark  = Color(0xFF262626)
+private val ReceivedBubbleColorLight = Color(0xFFFFFFFF)
+private val ReceivedBubbleColorDark  = Color(0xFF1F2C34)
 
 /**
  * Bubble corner radii for a received message.
@@ -61,8 +59,8 @@ private val ReceivedBubbleShape = RoundedCornerShape(
  * Direct Messages style.
  *
  * Responsibilities:
- *  • Applies the correct fill colour for the current theme (light/dark) without
- *    any gradient — Instagram received bubbles are always a flat, neutral grey.
+ *  • Applies the correct fill color for the current theme (light/dark) without
+ *    any gradient — Instagram received bubbles are always a flat, neutral gray.
  *  • Renders text at a consistent 15 sp regardless of emoji-only content, so
  *    emojis are treated as inline characters rather than oversized stickers.
  *  • Exposes an [onTap] callback so the parent can toggle the timestamp chip.
@@ -117,7 +115,7 @@ private fun ReceivedBubbleContent(message: Message, textColor: Color) {
                 text      = "📷 Photo",
                 style     = MaterialTheme.typography.bodyMedium.copy(
                     color    = textColor.copy(alpha = 0.80f),
-                    fontSize = 15.sp
+                    fontSize = 16.sp
                 ),
                 textAlign = TextAlign.Start
             )
@@ -126,7 +124,7 @@ private fun ReceivedBubbleContent(message: Message, textColor: Color) {
                     text      = message.content,
                     style     = MaterialTheme.typography.bodyMedium.copy(
                         color    = textColor,
-                        fontSize = 15.sp
+                        fontSize = 16.sp
                     ),
                     textAlign = TextAlign.Start
                 )
