@@ -33,13 +33,7 @@ import kotlinx.coroutines.delay
  *
  * ## Buffered position
  * [ExoPlayer.bufferedPosition] is not tracked in [PlayerUiState], so a lightweight
- * 500 ms local poll is kept for [bufferedMs] only. No [C.TIME_UNSET] guard is
- * needed — [ExoPlayer.bufferedPosition] always returns a valid non-negative value.
- *
- * ## AndroidView update
- * The [AndroidView] `update` lambda re-wires the player reference on every
- * recomposition, covering the case where the service restarts and delivers a
- * new [ExoPlayer] instance without recreating the view.
+ * 500 ms local poll is kept for [bufferedMs] only.
  *
  * @param uiState            Current player phase and metadata.
  * @param player             ExoPlayer instance owned by [PlayerService]; null until binding completes.
@@ -49,6 +43,7 @@ import kotlinx.coroutines.delay
  * @param onPause            Service pause callback.
  * @param onSeek             Service seekTo callback.
  * @param onRetry            Triggers re-extraction on error.
+ * @param onSetQuality       Forwarded to [PlayerControlsOverlay] for quality switching.
  * @param onToggleFullscreen Requests an orientation flip from [PlayerActivity].
  * @param modifier           Applied to the root [Box].
  */
@@ -63,12 +58,10 @@ fun PlayerVideoSurface(
     onPause            : () -> Unit,
     onSeek             : (Long) -> Unit,
     onRetry            : () -> Unit,
+    onSetQuality       : (Int) -> Unit,
     onToggleFullscreen : () -> Unit,
     modifier           : Modifier = Modifier,
 ) {
-    // positionMs and durationMs are already maintained at 500 ms intervals by
-    // PlayerService and flow through uiState — polling them here would be
-    // redundant work on the main thread. Only bufferedMs needs a local poll.
     var bufferedMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(player) {
@@ -84,11 +77,10 @@ fun PlayerVideoSurface(
             .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
-        // ── PlayerView (AndroidView) ──────────────────────────────────────────
         AndroidView(
             factory  = { ctx ->
                 PlayerView(ctx).apply {
-                    useController = false // custom controls overlay below
+                    useController = false
                     keepScreenOn  = true
                     resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
@@ -97,7 +89,6 @@ fun PlayerVideoSurface(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // ── Phase-specific overlays ───────────────────────────────────────────
         when (uiState.phase) {
             PlayerUiState.Phase.Idle,
             PlayerUiState.Phase.Loading -> PlayerLoadingOverlay()
@@ -108,12 +99,10 @@ fun PlayerVideoSurface(
             )
 
             PlayerUiState.Phase.Ready   -> {
-                // Mid-play buffering spinner — rendered above the controls overlay
                 if (uiState.isBuffering) PlayerLoadingOverlay()
             }
         }
 
-        // ── Controls overlay (always rendered; manages its own visibility) ────
         PlayerControlsOverlay(
             uiState            = uiState,
             positionMs         = uiState.currentPositionMs,
@@ -124,6 +113,7 @@ fun PlayerVideoSurface(
             onPlay             = onPlay,
             onPause            = onPause,
             onSeek             = onSeek,
+            onSetQuality       = onSetQuality,
             onToggleFullscreen = onToggleFullscreen,
             modifier           = Modifier.fillMaxSize(),
         )

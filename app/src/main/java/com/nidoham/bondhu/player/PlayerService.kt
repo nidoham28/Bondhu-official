@@ -1,18 +1,20 @@
-@file:Suppress("UnsafeOptInUsageError")
-
 package com.nidoham.bondhu.player
 
+import android.app.PendingIntent
 import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -23,12 +25,16 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.nidoham.bondhu.PlayerActivity
 import com.nidoham.bondhu.player.state.PlayerUiState
+import com.nidoham.bondhu.player.state.VideoQuality
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.extractor.stream.StreamExtractor
 import com.nidoham.extractor.stream.Streams
@@ -52,44 +58,24 @@ import javax.inject.Inject
  * Foreground service that owns the [ExoPlayer] instance and manages the full
  * stream lifecycle: metadata extraction → URL resolution → playback.
  *
- * Extends [MediaSessionService] so the system handles foreground promotion and
- * the media notification automatically via [MediaSession]. No manual
- * [startForeground] or [androidx.media3.ui.PlayerNotificationManager] calls
- * are required.
+ * ## Auto-stop fix
+ * [setSessionActivity] is set on [MediaSession] pointing to [PlayerActivity],
+ * giving `DefaultMediaNotificationProvider` a valid foreground `PendingIntent`.
+ * [onTaskRemoved] only calls [stopSelf] when the player is genuinely idle.
  *
- * ## Key design points
- * - [SimpleCache] (512 MB LRU) backed [CacheDataSource] eliminates redundant
- *   network re-fetches on seeks and rebuffers.
- * - [DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER] + decoder fallback
- *   enables the FFmpeg extension for MPEG-4 Part 2 and other non-native codecs.
- * - [DefaultTrackSelector] with [AdaptiveTrackSelection] and explicit H.264
- *   codec preference for maximum MPEG-4 compatibility.
- * - [DefaultLoadControl] with tuned buffer windows for smooth streaming on
- *   variable mobile connections.
- * - [DefaultBandwidthMeter] drives adaptive bitrate; resets on network-type change.
- * - [AudioAttributes] with audio-focus delegation and noisy-audio handling —
- *   ExoPlayer pauses automatically on headphone disconnect.
- * - [PowerManager.WakeLock] prevents CPU sleep during background playback.
- * - [WifiManager.WifiLock] keeps the Wi-Fi radio at full performance.
- * - [MediaItem] is built with an explicit MIME type hint so that
- *   [DefaultMediaSourceFactory] skips content-type sniffing.
- * - Progress polling runs at 500 ms and tracks [ExoPlayer.currentPosition];
- *   both position and duration are reported in milliseconds to match
- *   ExoPlayer's native unit.
- * - Recoverable network errors trigger a [ExoPlayer.prepare] retry instead
- *   of surfacing an error state to the UI.
- * - [onDestroy] order is correct: locks released → coroutines canceled →
- *   session released → player stopped and released.
+ * ## Audio + Video merging
+ * Separate video-only and audio-only progressive streams are combined via
+ * [MergingMediaSource]. HLS/DASH manifests carry multiplexed tracks and are
+ * handed directly to [DefaultMediaSourceFactory].
  *
- * ## Binding
- * ViewModels bind with [ACTION_BIND] to receive [PlayerBinder].
- * System / MediaController clients use the base-class session-token path.
+ * Resolution priority: HLS → DASH → Merged (video + audio) → AudioOnly.
  *
- * ## Cache ownership
- * [SimpleCache] is a process-wide singleton held in [Companion]. Call
- * [releaseCache] from your [android.app.Application] teardown or a Hilt
- * eager-singleton module if needed.
+ * ## Quality selection
+ * [setQuality] replaces the video track while preserving [currentAudioUrl] and
+ * the current seek position. Quality options are sourced from
+ * [Streams.videoOnlyStreams], sorted highest-first.
  */
+@OptIn(UnstableApi::class)
 @AndroidEntryPoint
 class PlayerService : MediaSessionService() {
 
@@ -101,23 +87,36 @@ class PlayerService : MediaSessionService() {
         private set
     private lateinit var mediaSession: MediaSession
 
+    // ── Media source factories ────────────────────────────────────────────
+
+    private lateinit var cacheDataSourceFactory: CacheDataSource.Factory
+    private lateinit var progressiveSourceFactory: ProgressiveMediaSource.Factory
+
     // ── System locks ──────────────────────────────────────────────────────
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock?  = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     // ── State ─────────────────────────────────────────────────────────────
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    /**
+     * Audio-only URL paired with the current video stream. Preserved across
+     * quality switches so [setQuality] can rebuild [MergingMediaSource] without
+     * re-extracting the page. Empty when the active source is HLS/DASH or
+     * audio-only.
+     */
+    private var currentAudioUrl: String = ""
+
     // ── Coroutines ────────────────────────────────────────────────────────
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Dispatchers.Main.immediate avoids a redundant post when already on Main.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loadJob: Job? = null
     private var progressJob: Job? = null
 
-    /** Prevents redundant re-extraction when the same URL is delivered again. */
     private var currentUrl: String = ""
 
     // ── Binder ────────────────────────────────────────────────────────────
@@ -132,37 +131,27 @@ class PlayerService : MediaSessionService() {
 
     companion object {
 
-        /** Intent action used by ViewModels when binding directly to this service. */
         const val ACTION_BIND = "com.nidoham.bondhu.player.ACTION_BIND"
 
-        // Buffer tuning (milliseconds)
         private const val MIN_BUFFER_MS                         = 15_000
         private const val MAX_BUFFER_MS                         = 50_000
         private const val BUFFER_FOR_PLAYBACK_MS                =  2_500
         private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS =  5_000
+        private const val HTTP_CONNECT_TIMEOUT_MS               = 10_000
+        private const val HTTP_READ_TIMEOUT_MS                  = 15_000
+        private const val PROGRESS_POLL_MS                      = 500L
+        private const val CACHE_MAX_BYTES                       = 512L * 1024 * 1024
 
-        // Network timeouts (milliseconds)
-        private const val HTTP_CONNECT_TIMEOUT_MS = 10_000
-        private const val HTTP_READ_TIMEOUT_MS    = 15_000
-
-        // Progress polling interval (milliseconds)
-        private const val PROGRESS_POLL_MS = 500L
-
-        // Maximum on-disk cache size
-        private const val CACHE_MAX_BYTES = 512L * 1024 * 1024 // 512 MB
+        /**
+         * Generic mobile browser UA. Required by some CDNs that reject
+         * non-browser requests; avoids 403/429 responses on stream URLs.
+         */
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
         @Volatile private var sharedCache: SimpleCache? = null
 
-        /**
-         * Returns — or lazily creates — the process-wide [SimpleCache].
-         * Thread-safe via double-checked locking.
-         *
-         * Uses [StandaloneDatabaseProvider] to satisfy the non-deprecated
-         * three-argument [SimpleCache] constructor introduced in Media3 1.x.
-         *
-         * @param cacheDir Base directory; a `exo_stream_cache` subdirectory is
-         *                 created automatically.
-         */
         private fun acquireCache(cacheDir: File, context: android.content.Context): SimpleCache =
             sharedCache ?: synchronized(this) {
                 sharedCache ?: SimpleCache(
@@ -172,11 +161,6 @@ class PlayerService : MediaSessionService() {
                 ).also { sharedCache = it }
             }
 
-        /**
-         * Releases the [SimpleCache] singleton and frees its disk resources.
-         * Call from [android.app.Application.onTerminate] or a Hilt component
-         * teardown — never from inside the service itself.
-         */
         fun releaseCache() {
             sharedCache?.release()
             sharedCache = null
@@ -191,9 +175,8 @@ class PlayerService : MediaSessionService() {
         acquireLocks()
     }
 
-    override fun onGetSession(
-        controllerInfo: MediaSession.ControllerInfo,
-    ): MediaSession = mediaSession
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession =
+        mediaSession
 
     override fun onBind(intent: Intent?): IBinder? =
         if (intent?.action == ACTION_BIND) binder else super.onBind(intent)
@@ -207,39 +190,30 @@ class PlayerService : MediaSessionService() {
         return START_NOT_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!exoPlayer.playWhenReady || exoPlayer.mediaItemCount == 0) stopSelf()
+    }
+
     override fun onDestroy() {
-        // Correct teardown order: release locks and cancel coroutines first
-        // so no in-flight work touches the player after it is released.
         releaseLocks()
         stopProgressUpdates()
         loadJob?.cancel()
         serviceScope.cancel()
         mediaSession.release()
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
+        // release() stops playback and frees all resources internally;
+        // explicit stop()/clearMediaItems() before it are redundant.
         exoPlayer.release()
         super.onDestroy()
     }
 
     // ── Initialization ────────────────────────────────────────────────────
 
-    /**
-     * Constructs and wires the full ExoPlayer stack: codec support, adaptive
-     * bitrate, cache-backed data source, audio focus, and buffer tuning.
-     */
     private fun initPlayer() {
-        // Drives adaptive bitrate selection; resets when the network type changes
-        // (e.g. Wi-Fi → mobile) to avoid overestimating available bandwidth.
         val bandwidthMeter = DefaultBandwidthMeter.Builder(this)
             .setResetOnNetworkTypeChange(true)
             .build()
 
-        // AdaptiveTrackSelection picks the quality tier best suited to current
-        // bandwidth. H.264 (AVC) is the preferred MPEG-4 codec; mixed MIME
-        // adaptiveness allows seamless codec switching inside HLS/DASH manifests.
-        val trackSelector = DefaultTrackSelector(
-            this, AdaptiveTrackSelection.Factory()
-        ).apply {
+        val trackSelector = DefaultTrackSelector(this, AdaptiveTrackSelection.Factory()).apply {
             setParameters(
                 buildUponParameters()
                     .setPreferredVideoMimeType(MimeTypes.VIDEO_H264)
@@ -249,11 +223,6 @@ class PlayerService : MediaSessionService() {
             )
         }
 
-        // EXTENSION_RENDERER_MODE_PREFER loads the FFmpeg extension (when present
-        // on the classpath) before the platform decoder, adding support for
-        // MPEG-4 Part 2, VP8, Opus, and other non-native formats.
-        // setEnableDecoderFallback drops to the next available decoder instead
-        // of throwing when a preferred decoder fails to initialize.
         val renderersFactory = DefaultRenderersFactory(this)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             .setEnableDecoderFallback(true)
@@ -269,58 +238,64 @@ class PlayerService : MediaSessionService() {
             .build()
 
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent(USER_AGENT)
             .setConnectTimeoutMs(HTTP_CONNECT_TIMEOUT_MS)
             .setReadTimeoutMs(HTTP_READ_TIMEOUT_MS)
             .setAllowCrossProtocolRedirects(true)
             .setTransferListener(bandwidthMeter)
 
-        // CacheDataSource sits between ExoPlayer and the network.
-        // FLAG_IGNORE_CACHE_ON_ERROR falls back to the network when a cached
-        // segment is corrupt, preventing a hard playback failure.
-        val cacheDataSourceFactory = CacheDataSource.Factory()
+        cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(acquireCache(cacheDir, applicationContext))
-            .setUpstreamDataSourceFactory(
-                DefaultDataSource.Factory(this, httpDataSourceFactory)
-            )
+            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(this, httpDataSourceFactory))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        progressiveSourceFactory = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
 
         exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .setBandwidthMeter(bandwidthMeter)
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
-            // Pauses automatically when a headphone or Bluetooth device disconnects.
             .setHandleAudioBecomingNoisy(true)
-            // Delegates audio-focus management to ExoPlayer — no manual
-            // AudioManager.requestAudioFocus calls required.
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    // AUDIO_CONTENT_TYPE_MOVIE is correct for video-with-audio content;
+                    // MUSIC was semantically wrong and can affect audio focus behaviour.
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build(),
                 /* handleAudioFocus = */ true,
             )
             .build()
 
-        mediaSession = MediaSession.Builder(this, exoPlayer).build()
+        val sessionActivity = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, PlayerActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        mediaSession = MediaSession.Builder(this, exoPlayer)
+            .setSessionActivity(sessionActivity)
+            .build()
+
         setupPlayerListener()
     }
 
-    /**
-     * Acquires a [PowerManager.WakeLock] and a [WifiManager.WifiLock] to keep
-     * the CPU and Wi-Fi radio alive during background playback.
-     *
-     * Requires `WAKE_LOCK`, `ACCESS_WIFI_STATE`, and `CHANGE_WIFI_STATE` in
-     * `AndroidManifest.xml`.
-     */
     private fun acquireLocks() {
         wakeLock = (getSystemService(POWER_SERVICE) as? PowerManager)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Bondhu:PlayerWakeLock")
-            ?.also { it.acquire(3 * 60 * 60 * 1000L) } // 3-hour safety timeout
+            ?.also { it.acquire(3 * 60 * 60 * 1000L) }
 
-        @Suppress("DEPRECATION") // No backward-compatible replacement below API 29
+        // WIFI_MODE_FULL_HIGH_PERF is deprecated from API 29.
+        // WIFI_MODE_FULL_LOW_LATENCY is the current replacement on Q+.
+        val wifiLockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        else
+            @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF
+
         wifiLock = (applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager)
-            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Bondhu:PlayerWifiLock")
+            ?.createWifiLock(wifiLockMode, "Bondhu:PlayerWifiLock")
             ?.also { it.acquire() }
     }
 
@@ -335,42 +310,73 @@ class PlayerService : MediaSessionService() {
     fun pause() { exoPlayer.pause() }
     fun seekTo(positionMs: Long) { exoPlayer.seekTo(positionMs) }
 
-    /** Toggles between play and pause without requiring callers to track state. */
     @Suppress("unused")
     fun togglePlayPause() {
         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
     }
 
-    /**
-     * Seeks forward by [deltaMs] milliseconds, clamped to stream duration.
-     * @param deltaMs Defaults to 10 seconds.
-     */
     @Suppress("unused")
     fun skipForward(deltaMs: Long = 10_000L) {
         val cap = exoPlayer.duration.takeIf { it != C.TIME_UNSET } ?: return
         exoPlayer.seekTo((exoPlayer.currentPosition + deltaMs).coerceAtMost(cap))
     }
 
-    /**
-     * Seeks backward by [deltaMs] milliseconds, clamped to zero.
-     * @param deltaMs Defaults to 10 seconds.
-     */
     @Suppress("unused")
     fun skipBackward(deltaMs: Long = 10_000L) {
         exoPlayer.seekTo((exoPlayer.currentPosition - deltaMs).coerceAtLeast(0L))
     }
 
     /**
-     * Cancels any in-flight extraction, resets state to [PlayerUiState.Phase.Loading],
-     * then resolves the playback URL and begins ExoPlayer playback.
+     * Switches the active video stream to the quality at [index] in
+     * [PlayerUiState.availableQualities].
      *
-     * @param pageUrl YouTube (or Piped-compatible) video page URL.
-     * @param title   Optimistic title shown during loading; replaced by the real
-     *                title once extraction succeeds.
+     * Only meaningful when [currentAudioUrl] is populated (i.e. a
+     * [PlaybackSource.Merged] source is active). No-op for HLS/DASH or
+     * audio-only sources where the quality list is empty.
+     *
+     * @param index Index into [PlayerUiState.availableQualities].
+     */
+    fun setQuality(index: Int) {
+        val quality  = _uiState.value.availableQualities.getOrNull(index) ?: return
+        val audioUrl = currentAudioUrl.takeIf { it.isNotBlank() } ?: return
+
+        val savedPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
+
+        val merged = MergingMediaSource(
+            progressiveSourceFactory.createMediaSource(
+                MediaItem.Builder()
+                    .setUri(quality.videoUrl)
+                    .setMimeType(MimeTypes.VIDEO_MP4)
+                    .build()
+            ),
+            progressiveSourceFactory.createMediaSource(
+                MediaItem.Builder()
+                    .setUri(audioUrl)
+                    .setMimeType(MimeTypes.AUDIO_MP4)
+                    .build()
+            ),
+        )
+
+        exoPlayer.setMediaSource(merged, savedPosition)
+        exoPlayer.prepare()
+        exoPlayer.play()
+
+        _uiState.value = _uiState.value.copy(selectedQualityIndex = index)
+        Timber.d("Quality switched to ${quality.label}")
+    }
+
+    /**
+     * Cancels any in-flight extraction, resets state to [PlayerUiState.Phase.Loading],
+     * resolves the playback source on an IO dispatcher, then hands it to ExoPlayer
+     * on the main thread.
+     *
+     * @param pageUrl YouTube / Piped-compatible video page URL.
+     * @param title   Optimistic title shown during loading.
      */
     fun loadAndPlay(pageUrl: String, title: String?) {
         loadJob?.cancel()
-        currentUrl = pageUrl
+        currentUrl      = pageUrl
+        currentAudioUrl = ""
 
         loadJob = serviceScope.launch {
             _uiState.value = PlayerUiState(
@@ -378,11 +384,19 @@ class PlayerService : MediaSessionService() {
                 title = title.orEmpty(),
             )
 
-            streamExtractor.fetchStream(pageUrl)
+            // Extraction is a network/IO operation; explicitly dispatch to IO
+            // so we never block the main thread regardless of the extractor's
+            // internal dispatcher handling.
+            val result = withContext(Dispatchers.IO) {
+                streamExtractor.fetchStream(pageUrl)
+            }
+
+            // Back on Dispatchers.Main.immediate here — safe to touch ExoPlayer.
+            result
                 .onSuccess { data ->
-                    val streamInfo = data.stream.resolveStream()
-                    if (streamInfo == null) {
-                        Timber.w("No playable stream for: $pageUrl")
+                    val source = data.stream.resolvePlaybackSource()
+                    if (source == null) {
+                        Timber.w("No playable source for: $pageUrl")
                         _uiState.value = _uiState.value.copy(
                             phase = PlayerUiState.Phase.Error,
                             error = "No playable stream found for this video.",
@@ -390,28 +404,61 @@ class PlayerService : MediaSessionService() {
                         return@onSuccess
                     }
 
-                    val resolvedTitle = title?.takeIf { it.isNotBlank() } ?: data.stream.title
+                    val resolvedTitle  = title?.takeIf { it.isNotBlank() } ?: data.stream.title
+                    val qualityOptions = if (source is PlaybackSource.Merged)
+                        buildQualityList(data.stream) else emptyList()
 
-                    withContext(Dispatchers.Main) {
-                        // Stop current playback before loading new media to
-                        // avoid a brief audio overlap on rapid track switches.
-                        exoPlayer.stop()
-                        exoPlayer.setMediaItem(streamInfo.toMediaItem())
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = true
+                    when (source) {
+                        is PlaybackSource.Adaptive -> {
+                            exoPlayer.setMediaItem(
+                                MediaItem.Builder()
+                                    .setUri(source.url)
+                                    .setMimeType(source.mimeType)
+                                    .build()
+                            )
+                        }
+                        is PlaybackSource.Merged -> {
+                            currentAudioUrl = source.audioUrl
+                            exoPlayer.setMediaSource(
+                                MergingMediaSource(
+                                    progressiveSourceFactory.createMediaSource(
+                                        MediaItem.Builder()
+                                            .setUri(source.videoUrl)
+                                            .setMimeType(MimeTypes.VIDEO_MP4)
+                                            .build()
+                                    ),
+                                    progressiveSourceFactory.createMediaSource(
+                                        MediaItem.Builder()
+                                            .setUri(source.audioUrl)
+                                            .setMimeType(MimeTypes.AUDIO_MP4)
+                                            .build()
+                                    ),
+                                )
+                            )
+                        }
+                        is PlaybackSource.AudioOnly -> {
+                            exoPlayer.setMediaItem(
+                                MediaItem.Builder()
+                                    .setUri(source.url)
+                                    .setMimeType(MimeTypes.AUDIO_MP4)
+                                    .build()
+                            )
+                        }
                     }
 
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+
                     _uiState.value = PlayerUiState(
-                        phase        = PlayerUiState.Phase.Ready,
-                        title        = resolvedTitle,
-                        uploaderName = data.stream.uploaderName,
-                        uploaderUrl  = data.stream.uploaderAvatars.maxByOrNull { it.height }?.url,
-                        thumbnailUrl = data.stream.thumbnails.maxByOrNull { it.height }?.url,
-                        durationMs   = data.stream.duration * 1000L,
-                        currentPositionMs = 0L,
-                        // isPlaying stays false here; the ExoPlayer listener
-                        // flips it to true once STATE_READY fires — no race condition.
-                        isPlaying    = false
+                        phase                = PlayerUiState.Phase.Ready,
+                        title                = resolvedTitle,
+                        uploaderName         = data.stream.uploaderName,
+                        uploaderUrl          = data.stream.uploaderAvatars.maxByOrNull { it.height }?.url,
+                        thumbnailUrl         = data.stream.thumbnails.maxByOrNull { it.height }?.url,
+                        durationMs           = data.stream.duration * 1000L,
+                        isPlaying            = false,
+                        availableQualities   = qualityOptions,
+                        selectedQualityIndex = 0,
                     )
                 }
                 .onFailure { error ->
@@ -463,17 +510,14 @@ class PlayerService : MediaSessionService() {
                     Player.STATE_BUFFERING -> {
                         _uiState.value = _uiState.value.copy(isBuffering = true)
                     }
-
                     Player.STATE_READY -> {
                         val rawDuration = exoPlayer.duration.takeIf { it != C.TIME_UNSET }
                         _uiState.value = _uiState.value.copy(
-                            isBuffering       = false,
-                            currentPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L),
-                            durationMs        = rawDuration?.coerceAtLeast(0L)
-                                ?: _uiState.value.durationMs
+                            isBuffering = false,
+                            durationMs  = rawDuration?.coerceAtLeast(0L)
+                                ?: _uiState.value.durationMs,
                         )
                     }
-
                     Player.STATE_ENDED -> {
                         _uiState.value = _uiState.value.copy(
                             isPlaying         = false,
@@ -481,19 +525,14 @@ class PlayerService : MediaSessionService() {
                             currentPositionMs = 0L,
                         )
                     }
-
                     Player.STATE_IDLE -> {
-                        TODO()
+                        _uiState.value = _uiState.value.copy(isBuffering = false)
                     }
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 Timber.e(error, "ExoPlayer error [code=${error.errorCode}]")
-
-                // Transient network errors are recoverable — re-preparing lets
-                // ExoPlayer retry from cache or network without surfacing an error
-                // state to the user.
                 val isRecoverable = error.errorCode in setOf(
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
@@ -504,7 +543,6 @@ class PlayerService : MediaSessionService() {
                     exoPlayer.prepare()
                     return
                 }
-
                 _uiState.value = _uiState.value.copy(
                     phase = PlayerUiState.Phase.Error,
                     error = error.localizedMessage ?: "Playback error.",
@@ -514,40 +552,51 @@ class PlayerService : MediaSessionService() {
     }
 }
 
-// ── Streams extensions ────────────────────────────────────────────────────────
+// ── Playback source model ─────────────────────────────────────────────────────
 
-/**
- * Carries the resolved playback URL alongside its MIME type hint.
- *
- * Passing the MIME type to [MediaItem] lets [DefaultMediaSourceFactory] skip
- * content-type sniffing, which is both faster and more reliable for HLS/DASH.
- */
-private data class StreamInfo(val url: String, val mimeType: String?) {
-    fun toMediaItem(): MediaItem = MediaItem.Builder()
-        .setUri(url)
-        .apply { mimeType?.let { setMimeType(it) } }
-        .build()
+private sealed class PlaybackSource {
+    data class Adaptive(val url: String, val mimeType: String) : PlaybackSource()
+    data class Merged(val videoUrl: String, val audioUrl: String) : PlaybackSource()
+    data class AudioOnly(val url: String) : PlaybackSource()
 }
 
-/**
- * Resolves the best available playback stream from this [Streams] object.
- *
- * Priority (highest → lowest):
- * 1. HLS manifest — adaptive, lowest latency to first frame.
- * 2. DASH manifest — adaptive, highest quality ceiling.
- * 3. Best progressive MP4 video stream — direct URL, sorted by height.
- * 4. Best audio-only MP4 stream — last resort for audio-only content.
- *
- * Returns `null` when none of the above are available.
- */
-private fun Streams.resolveStream(): StreamInfo? =
-    hlsUrl?.takeIf { it.isNotBlank() }
-        ?.let { StreamInfo(it, MimeTypes.APPLICATION_M3U8) }
-        ?: dashMpdUrl?.takeIf { it.isNotBlank() }
-            ?.let { StreamInfo(it, MimeTypes.APPLICATION_MPD) }
-        ?: videoStreams.maxByOrNull { it.height }?.content
-            ?.takeIf { it.isNotBlank() }
-            ?.let { StreamInfo(it, MimeTypes.VIDEO_MP4) }
-        ?: audioStreams.maxByOrNull { it.averageBitrate }?.content
-            ?.takeIf { it.isNotBlank() }
-            ?.let { StreamInfo(it, MimeTypes.AUDIO_MP4) }
+// ── Streams resolution ────────────────────────────────────────────────────────
+
+private fun Streams.resolvePlaybackSource(): PlaybackSource? {
+    hlsUrl?.takeIf { it.isNotBlank() }?.let {
+        return PlaybackSource.Adaptive(it, MimeTypes.APPLICATION_M3U8)
+    }
+    dashMpdUrl?.takeIf { it.isNotBlank() }?.let {
+        return PlaybackSource.Adaptive(it, MimeTypes.APPLICATION_MPD)
+    }
+
+    val bestVideoUrl = videoOnlyStreams
+        .maxByOrNull { it.height }
+        ?.content
+        ?.takeIf { it.isNotBlank() }
+
+    val bestAudioUrl = audioStreams
+        .maxByOrNull { it.averageBitrate }
+        ?.content
+        ?.takeIf { it.isNotBlank() }
+
+    if (bestVideoUrl != null && bestAudioUrl != null) {
+        return PlaybackSource.Merged(bestVideoUrl, bestAudioUrl)
+    }
+
+    // Simplified single-expression: no null AudioOnly possible here.
+    return bestAudioUrl?.let { PlaybackSource.AudioOnly(it) }
+}
+
+// ── Quality list builder ──────────────────────────────────────────────────────
+
+private fun buildQualityList(streams: Streams): List<VideoQuality> =
+// videoOnlyStreams matches the source used in resolvePlaybackSource;
+    // the original videoStreams reference was an inconsistency.
+    streams.videoOnlyStreams
+        .filter { it.content.isNotBlank() && it.height > 0 }
+        .groupBy { it.height }
+        .mapValues { (_, variants) -> variants.maxBy { it.bitrate } }
+        .values
+        .sortedByDescending { it.height }
+        .map { VideoQuality(label = "${it.height}p", height = it.height, videoUrl = it.content) }

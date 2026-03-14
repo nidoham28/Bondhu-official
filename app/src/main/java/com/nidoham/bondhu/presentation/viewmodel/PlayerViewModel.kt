@@ -35,9 +35,20 @@ import javax.inject.Inject
  * to return a [PlayerService.PlayerBinder] rather than delegating to the
  * Media3 session path inside [androidx.media3.session.MediaSessionService].
  *
+ * Binding registration is tracked by [isBindingRegistered], which is set
+ * immediately after [Context.bindService] succeeds. This is distinct from
+ * [playerService] being non-null (the connection being active), so that
+ * [onCleared] can safely call [Context.unbindService] even after
+ * [ServiceConnection.onServiceDisconnected] fires due to a service crash.
+ *
  * ## State bridging
  * Once bound, a collection job mirrors [PlayerService.uiState] into [uiState].
  * [player] exposes the [ExoPlayer] instance for wiring into a PlayerView.
+ *
+ * ## Quality selection
+ * [setQuality] delegates to [PlayerService.setQuality]. The call is a no-op
+ * when the active source is HLS/DASH (i.e. [PlayerUiState.availableQualities]
+ * is empty), since adaptive bitrate handles quality internally in those cases.
  *
  * ## Service lifetime
  * The service is unbound in [onCleared] but is not stopped — playback continues
@@ -63,23 +74,33 @@ class PlayerViewModel @Inject constructor(
 
     // ── Service binding ───────────────────────────────────────────────────────
 
-    private var playerService : PlayerService? = null
-    private var isBound       : Boolean        = false
-    private var stateJob      : Job?           = null
+    private var playerService: PlayerService? = null
 
-    /** Preserved so [retry] can resubmit the original page URL, not the resolved title. */
-    private var lastStreamUrl : String         = ""
+    /**
+     * Tracks whether [Context.bindService] has been called and the binding is
+     * still registered. Set to `true` immediately after [bindService] returns
+     * successfully and cleared only after [Context.unbindService] is called.
+     *
+     * This must not be set inside [ServiceConnection.onServiceConnected], because
+     * [ServiceConnection.onServiceDisconnected] resets the connection state on a
+     * service crash while the binding itself remains registered. Using the callback
+     * to gate [unbindService] would cause a binding leak on crash + ViewModel clear.
+     */
+    private var isBindingRegistered: Boolean = false
+
+    private var stateJob: Job? = null
+
+    /** Preserved so [retry] can resubmit the original page URL. */
+    private var lastStreamUrl: String = ""
 
     private val connection = object : ServiceConnection {
 
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val service   = (binder as PlayerService.PlayerBinder).getService()
+            val service = (binder as PlayerService.PlayerBinder).getService()
             playerService = service
-            isBound       = true
             _player.value = service.exoPlayer
 
-            // Mirror service state into our own flow so the UI has a single,
-            // stable reference that survives activity recreations and rebinds.
+            // Cancel any stale collection job before starting a new one.
             stateJob?.cancel()
             stateJob = viewModelScope.launch {
                 service.uiState.collect { _uiState.value = it }
@@ -88,20 +109,22 @@ class PlayerViewModel @Inject constructor(
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            // The service has crashed or been killed. The binding is still
+            // registered — do NOT set isBindingRegistered = false here.
+            // onCleared() will call unbindService() when the ViewModel is cleared.
             playerService = null
-            isBound       = false
             _player.value = null
             stateJob?.cancel()
-            Timber.d("PlayerService disconnected")
+            Timber.d("PlayerService disconnected unexpectedly")
         }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Starts [PlayerService] as a foreground service and binds to it using
-     * [PlayerService.ACTION_BIND]. Safe to call on activity recreation — the
-     * service deduplicates loads for the same URL.
+     * Starts [PlayerService] as a foreground service and binds to it. Safe to
+     * call on activity recreation — if a binding is already registered the call
+     * is ignored, and the service itself deduplicates loads for the same URL.
      *
      * @param streamUrl YouTube page URL forwarded to the service for extraction.
      * @param title     Optional display title used while stream metadata loads.
@@ -110,21 +133,36 @@ class PlayerViewModel @Inject constructor(
         lastStreamUrl = streamUrl
         val context = getApplication<Application>()
 
-        // Start intent carries the stream URL for onStartCommand.
-        val startIntent = buildServiceIntent(context, streamUrl, title)
-        context.startForegroundService(startIntent)
+        context.startForegroundService(buildServiceIntent(context, streamUrl, title))
 
-        // Bind intent uses ACTION_BIND so MediaSessionService.onBind routes
-        // to our PlayerBinder instead of the Media3 session path.
+        // Guard against accumulating duplicate bindings on activity recreation.
+        if (isBindingRegistered) return
+
         val bindIntent = Intent(context, PlayerService::class.java).apply {
             action = PlayerService.ACTION_BIND
         }
-        context.bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)
+        if (context.bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)) {
+            isBindingRegistered = true
+        } else {
+            Timber.e("bindService returned false — PlayerService unavailable")
+        }
     }
 
     fun play()                   { playerService?.play() }
     fun pause()                  { playerService?.pause() }
     fun seekTo(positionMs: Long) { playerService?.seekTo(positionMs) }
+
+    /**
+     * Switches the active video stream to the quality at [index] in
+     * [PlayerUiState.availableQualities]. Playback position is preserved
+     * seamlessly inside [PlayerService.setQuality].
+     *
+     * No-op when [playerService] is null or the quality list is empty
+     * (HLS/DASH sources use adaptive bitrate automatically).
+     *
+     * @param index Index into [PlayerUiState.availableQualities].
+     */
+    fun setQuality(index: Int) { playerService?.setQuality(index) }
 
     /**
      * Resubmits [lastStreamUrl] to [PlayerService] when the player is in an
@@ -133,10 +171,11 @@ class PlayerViewModel @Inject constructor(
      */
     fun retry() {
         val service = playerService ?: return
-        if (_uiState.value.phase == PlayerUiState.Phase.Error && lastStreamUrl.isNotBlank()) {
+        val state = _uiState.value
+        if (state.phase == PlayerUiState.Phase.Error && lastStreamUrl.isNotBlank()) {
             service.loadAndPlay(
                 pageUrl = lastStreamUrl,
-                title   = _uiState.value.title.takeIf { it.isNotBlank() },
+                title   = state.title.takeIf { it.isNotBlank() },
             )
         }
     }
@@ -146,9 +185,9 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         stateJob?.cancel()
-        if (isBound) {
+        if (isBindingRegistered) {
             getApplication<Application>().unbindService(connection)
-            isBound = false
+            isBindingRegistered = false
         }
     }
 

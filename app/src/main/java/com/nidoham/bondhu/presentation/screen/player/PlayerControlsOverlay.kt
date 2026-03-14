@@ -7,7 +7,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -50,18 +49,18 @@ private const val SEEK_AMOUNT_MS     = 10_000L
  *
  * ## Double-tap seek
  * Double-tapping the left third of the surface seeks back 10 s; the right
- * third seeks forward 10 s. A brief animated icon flash confirms the action,
- * matching YouTube's interaction model.
+ * third seeks forward 10 s. A brief animated icon flash confirms the action.
  *
  * @param uiState            Current player phase, title, and playback flags.
- * @param positionMs         Live playback position polled from ExoPlayer.
- * @param bufferedMs         Buffered position polled from ExoPlayer.
- * @param durationMs         Total stream duration from ExoPlayer.
+ * @param positionMs         Live playback position in milliseconds.
+ * @param bufferedMs         Buffered position in milliseconds.
+ * @param durationMs         Total stream duration in milliseconds.
  * @param isLandscape        Drives inset padding and layout adjustments in child bars.
  * @param onBack             Forwarded to [PlayerTopOverlay].
  * @param onPlay             Requests service play.
  * @param onPause            Requests service pause.
  * @param onSeek             Requests service seekTo.
+ * @param onSetQuality       Forwarded to [PlayerBottomBar] for quality switching.
  * @param onToggleFullscreen Requests an orientation change from [PlayerActivity].
  * @param modifier           Applied to the root [Box].
  */
@@ -76,6 +75,7 @@ fun PlayerControlsOverlay(
     onPlay             : () -> Unit,
     onPause            : () -> Unit,
     onSeek             : (Long) -> Unit,
+    onSetQuality       : (Int) -> Unit,
     onToggleFullscreen : () -> Unit,
     modifier           : Modifier = Modifier,
 ) {
@@ -98,7 +98,6 @@ fun PlayerControlsOverlay(
         if (uiState.isPlaying) scheduleHide()
     }
 
-    // Reset the auto-hide timer whenever play state changes.
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying && controlsVisible) scheduleHide()
         else hideJob?.cancel()
@@ -168,7 +167,6 @@ fun PlayerControlsOverlay(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
 
-                // Top gradient bar
                 PlayerTopOverlay(
                     title       = uiState.title,
                     onBack      = onBack,
@@ -176,7 +174,6 @@ fun PlayerControlsOverlay(
                     modifier    = Modifier.align(Alignment.TopCenter),
                 )
 
-                // Center controls — hidden during loading/error; those overlays take precedence
                 if (uiState.phase == PlayerUiState.Phase.Ready) {
                     PlayerCenterControls(
                         isPlaying   = uiState.isPlaying,
@@ -189,16 +186,18 @@ fun PlayerControlsOverlay(
                     )
                 }
 
-                // Bottom gradient bar
                 if (uiState.phase == PlayerUiState.Phase.Ready) {
                     PlayerBottomBar(
-                        positionMs         = positionMs,
-                        bufferedMs         = bufferedMs,
-                        durationMs         = durationMs,
-                        isLandscape        = isLandscape,
-                        onSeek             = { onSeek(it); showControls() },
-                        onToggleFullscreen = onToggleFullscreen,
-                        modifier           = Modifier.align(Alignment.BottomCenter),
+                        positionMs           = positionMs,
+                        bufferedMs           = bufferedMs,
+                        durationMs           = durationMs,
+                        isLandscape          = isLandscape,
+                        availableQualities   = uiState.availableQualities,
+                        selectedQualityIndex = uiState.selectedQualityIndex,
+                        onSeek               = { onSeek(it); showControls() },
+                        onSetQuality         = onSetQuality,
+                        onToggleFullscreen   = onToggleFullscreen,
+                        modifier             = Modifier.align(Alignment.BottomCenter),
                     )
                 }
             }

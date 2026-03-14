@@ -22,12 +22,9 @@ import com.nidoham.bondhu.player.state.PlayerUiState
  * **Portrait** — A non-scrollable 16:9 video surface sits at the top of the
  * screen, filling the full width. Below it, [PlayerInfoSection] shows the
  * title, uploader, and the [PlayerActionRow]. The entire column is scrollable
- * so future additions (comments, recommended videos) can be placed beneath
- * without layout changes.
+ * so future additions (comments, recommended videos) can be placed beneath.
  *
  * **Landscape** — [PlayerVideoSurface] expands to fill the entire screen.
- * The status bar is not padded here because [PlayerActivity] hides the system
- * UI entirely when in landscape.
  *
  * Both layouts delegate all video rendering and control interaction to
  * [PlayerVideoSurface], which owns the [AndroidView] and the
@@ -41,6 +38,7 @@ import com.nidoham.bondhu.player.state.PlayerUiState
  * @param onPause            Service pause delegate.
  * @param onSeek             Service seekTo delegate.
  * @param onRetry            Re-triggers stream extraction on error.
+ * @param onSetQuality       Triggers a quality-tier switch in [PlayerService].
  * @param onToggleFullscreen Requests an orientation change from [PlayerActivity].
  */
 @Composable
@@ -53,10 +51,10 @@ fun PlayerScreen(
     onPause            : () -> Unit,
     onSeek             : (Long) -> Unit,
     onRetry            : () -> Unit,
+    onSetQuality       : (Int) -> Unit,
     onToggleFullscreen : () -> Unit,
 ) {
     if (isLandscape) {
-        // ── Landscape: full-screen video ──────────────────────────────────────
         PlayerVideoSurface(
             uiState            = uiState,
             player             = player,
@@ -66,11 +64,11 @@ fun PlayerScreen(
             onPause            = onPause,
             onSeek             = onSeek,
             onRetry            = onRetry,
+            onSetQuality       = onSetQuality,
             onToggleFullscreen = onToggleFullscreen,
             modifier           = Modifier.fillMaxSize(),
         )
     } else {
-        // ── Portrait: 16:9 video + scrollable info below ──────────────────────
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -78,7 +76,6 @@ fun PlayerScreen(
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState()),
         ) {
-            // 16:9 video surface — fills full width, height constrained by ratio
             PlayerVideoSurface(
                 uiState            = uiState,
                 player             = player,
@@ -88,18 +85,18 @@ fun PlayerScreen(
                 onPause            = onPause,
                 onSeek             = onSeek,
                 onRetry            = onRetry,
+                onSetQuality       = onSetQuality,
                 onToggleFullscreen = onToggleFullscreen,
                 modifier           = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f),
             )
 
-            // Metadata — only meaningful once stream info is resolved
             PlayerInfoSection(
-                title = uiState.title,
+                title        = uiState.title,
                 uploaderName = uiState.uploaderName,
-                uploaderUrl = uiState.uploaderUrl,
-                modifier = Modifier
+                uploaderUrl  = uiState.uploaderUrl,
+                modifier     = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background),
             )

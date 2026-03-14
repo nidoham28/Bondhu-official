@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowInsetsCompat
@@ -39,9 +40,10 @@ import dagger.hilt.android.AndroidEntryPoint
  * the display from dimming during playback in either orientation.
  *
  * ## Config changes
- * `orientation`, `screenSize`, and `screenLayout` are handled in-process
- * (declared in the manifest) so the activity is never recreated on rotation.
- * The Compose tree reacts to the new [LocalConfiguration] automatically.
+ * `orientation`, `screenSize`, `screenLayout`, and `smallestScreenSize` are
+ * handled in-process (declared in the manifest) so the activity is never
+ * recreated on rotation or foldable resize events. The Compose tree reacts
+ * to the new [LocalConfiguration] automatically.
  */
 @AndroidEntryPoint
 class PlayerActivity : BaseActivity() {
@@ -61,25 +63,24 @@ class PlayerActivity : BaseActivity() {
 
         setContent {
             AppTheme {
-                val uiState    by viewModel.uiState.collectAsStateWithLifecycle()
-                val player     by viewModel.player.collectAsStateWithLifecycle()
-                val config      = LocalConfiguration.current
-                val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val uiState     by viewModel.uiState.collectAsStateWithLifecycle()
+                val player      by viewModel.player.collectAsStateWithLifecycle()
+                val isLandscape  = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-                // Hide or restore system bars whenever orientation changes.
-                LaunchedEffect(isLandscape) {
-                    val controller = WindowInsetsControllerCompat(window, window.decorView)
-                    if (isLandscape) {
-                        controller.hide(WindowInsetsCompat.Type.systemBars())
-                        controller.systemBarsBehavior =
+                // Created once; systemBarsBehavior set at construction — not on every orientation change.
+                val insetsController = remember {
+                    WindowInsetsControllerCompat(window, window.decorView).apply {
+                        systemBarsBehavior =
                             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    } else {
-                        controller.show(WindowInsetsCompat.Type.systemBars())
                     }
                 }
 
-                // Bind to PlayerService once on initial composition.
-                LaunchedEffect(Unit) {
+                LaunchedEffect(isLandscape) {
+                    if (isLandscape) insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                    else             insetsController.show(WindowInsetsCompat.Type.systemBars())
+                }
+
+                LaunchedEffect(streamUrl) {
                     viewModel.initPlayer(streamUrl, title)
                 }
 
@@ -93,25 +94,19 @@ class PlayerActivity : BaseActivity() {
                         player             = player,
                         isLandscape        = isLandscape,
                         onBack             = {
-                            if (isLandscape) {
-                                // Return to portrait explicitly rather than delegating
-                                // to SCREEN_ORIENTATION_UNSPECIFIED, which is ambiguous
-                                // on devices with rotation lock enabled.
-                                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            } else {
-                                finish()
-                            }
+                            if (isLandscape) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            else             finish()
                         },
                         onPlay             = viewModel::play,
                         onPause            = viewModel::pause,
                         onSeek             = viewModel::seekTo,
                         onRetry            = viewModel::retry,
+                        onSetQuality       = viewModel::setQuality,
                         onToggleFullscreen = {
-                            requestedOrientation = if (isLandscape) {
+                            requestedOrientation = if (isLandscape)
                                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            } else {
+                            else
                                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            }
                         },
                     )
                 }
