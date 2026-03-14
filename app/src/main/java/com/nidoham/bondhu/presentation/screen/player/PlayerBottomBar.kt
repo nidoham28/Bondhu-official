@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -34,26 +35,39 @@ import com.nidoham.bondhu.player.state.VideoQuality
 /**
  * Bottom gradient bar rendered inside the controls overlay.
  *
- * Contains (left to right): current position / total duration label, a flexible
- * [PlayerSeekBar], a quality picker button, and a fullscreen toggle button.
+ * ## Layout — two rows inside a [Column]
+ * ```
+ * ┌────────────────────────────────────────────────┐
+ * │  ████████░░░░░░░░░░░─────────────────────  ← seekbar row
+ * │  0:42 / 10:00            [720p]  [⛶]       ← controls row
+ * └────────────────────────────────────────────────┘
+ * ```
+ * The seekbar occupies its own full-width row so it is never squeezed by the
+ * time label or action buttons. The controls row below it uses a [Spacer] with
+ * [weight(1f)] to push the quality/fullscreen buttons to the trailing edge.
+ *
+ * The [modifier] passed by the caller should include
+ * `Modifier.align(Alignment.BottomCenter)` so the bar sits at the bottom of
+ * the [PlayerControlsOverlay] surface.
  *
  * ## Quality picker
- * When [availableQualities] is non-empty (i.e. the active source is a merged
- * video-only + audio pair), the quality button shows the currently selected
- * resolution label (e.g. "720p") and opens a [DropdownMenu] listing all
- * available tiers. A checkmark indicates the active selection. When the list is
- * empty (HLS/DASH adaptive source), the button shows "Auto" and is non-interactive.
+ * When [availableQualities] is non-empty (merged video-only + audio source),
+ * the quality button opens a [DropdownMenu] listing all tiers with a checkmark
+ * on the active selection. When empty (HLS/DASH adaptive source), the button
+ * shows "Auto" and is disabled.
  *
  * @param positionMs           Current playback position in milliseconds.
  * @param bufferedMs           Currently buffered position in milliseconds.
  * @param durationMs           Total stream duration in milliseconds.
  * @param isLandscape          When true, applies navigation bar inset padding.
- * @param availableQualities   Quality tiers available for selection; empty for adaptive sources.
- * @param selectedQualityIndex Index of the currently active quality in [availableQualities].
- * @param onSeek               Forwarded to [PlayerSeekBar] for seek-by-position.
- * @param onSetQuality         Called with the chosen index when the user selects a quality tier.
+ * @param availableQualities   Quality tiers available for selection.
+ * @param selectedQualityIndex Index of the currently active quality.
+ * @param onSeek               Forwarded to [PlayerSeekBar].
+ * @param onSetQuality         Called with the chosen index on quality selection.
  * @param onToggleFullscreen   Called when the fullscreen icon is tapped.
- * @param modifier             Applied to the root [Box].
+ * @param modifier             Applied to the root [Box]. Pass
+ *                             `Modifier.align(Alignment.BottomCenter)` from the
+ *                             parent to pin this bar to the bottom of the overlay.
  */
 @Composable
 fun PlayerBottomBar(
@@ -72,54 +86,55 @@ fun PlayerBottomBar(
         colors = listOf(Color.Transparent, Color(0xCC000000)),
     )
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(gradient)
             .then(if (isLandscape) Modifier.navigationBarsPadding() else Modifier)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp)
+            .padding(bottom = 4.dp),
     ) {
-        Column {
-            PlayerSeekBar(
-                positionMs = positionMs,
-                bufferedMs = bufferedMs,
-                durationMs = durationMs,
-                onSeek     = onSeek,
-                modifier   = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
+        Row(
+            modifier          = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text     = "${positionMs.formatTime()} / ${durationMs.formatTime()}",
+                style    = MaterialTheme.typography.labelSmall,
+                color    = Color.White,
+                modifier = Modifier.padding(start = 4.dp),
             )
 
-            Row(
-                modifier              = Modifier.fillMaxWidth(),
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text     = "${positionMs.formatTime()} / ${durationMs.formatTime()}",
-                    style    = MaterialTheme.typography.labelSmall,
-                    color    = Color.White,
-                    modifier = Modifier.padding(start = 8.dp),
+            Spacer(modifier = Modifier.weight(1f))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QualityButton(
+                    availableQualities   = availableQualities,
+                    selectedQualityIndex = selectedQualityIndex,
+                    onSetQuality         = onSetQuality,
                 )
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    QualityButton(
-                        availableQualities   = availableQualities,
-                        selectedQualityIndex = selectedQualityIndex,
-                        onSetQuality         = onSetQuality,
+                IconButton(onClick = onToggleFullscreen) {
+                    Icon(
+                        imageVector        = if (isLandscape) Icons.Rounded.FullscreenExit
+                        else              Icons.Rounded.Fullscreen,
+                        contentDescription = if (isLandscape) "Exit fullscreen"
+                        else              "Fullscreen",
+                        tint               = Color.White,
                     )
-
-                    IconButton(onClick = onToggleFullscreen) {
-                        Icon(
-                            imageVector        = if (isLandscape) Icons.Rounded.FullscreenExit
-                            else              Icons.Rounded.Fullscreen,
-                            contentDescription = if (isLandscape) "Exit fullscreen" else "Fullscreen",
-                            tint               = Color.White,
-                        )
-                    }
                 }
             }
         }
+
+        PlayerSeekBar(
+            positionMs = positionMs,
+            bufferedMs = bufferedMs,
+            durationMs = durationMs,
+            onSeek     = onSeek,
+            modifier   = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp),
+        )
     }
 }
 
@@ -130,11 +145,7 @@ fun PlayerBottomBar(
  * a [DropdownMenu] listing all available tiers on tap.
  *
  * When [availableQualities] is empty (HLS/DASH adaptive source), the button
- * renders an "Auto" label and ignores tap events — there is nothing to select
- * manually since the player handles bitrate adaptation internally.
- *
- * The menu positions itself above the button automatically (Compose default
- * behaviour) because the button sits near the bottom of the screen.
+ * renders an "Auto" label and ignores tap events.
  *
  * @param availableQualities   Sorted descending by height; index 0 is best quality.
  * @param selectedQualityIndex Currently active index; shown with a checkmark.
@@ -154,8 +165,8 @@ private fun QualityButton(
 
     Box {
         TextButton(
-            onClick  = { if (!isAdaptive) menuOpen = true },
-            enabled  = !isAdaptive,
+            onClick = { if (!isAdaptive) menuOpen = true },
+            enabled = !isAdaptive,
         ) {
             Text(
                 text  = label,
@@ -192,7 +203,7 @@ private fun QualityButton(
                                     tint               = MaterialTheme.colorScheme.primary,
                                 )
                             } else {
-                                // Reserve the same space as the checkmark so labels stay aligned.
+                                // Reserve space matching the checkmark icon width.
                                 Box(modifier = Modifier.padding(start = 24.dp))
                             }
                         },
