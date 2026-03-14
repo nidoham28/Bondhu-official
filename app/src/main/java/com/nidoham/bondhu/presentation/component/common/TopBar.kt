@@ -13,6 +13,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.tooling.preview.Preview
 
 /**
  * Top app bar with a leading Add action, a centered title, and a trailing
@@ -20,8 +21,8 @@ import androidx.compose.ui.graphics.Color
  *
  * Layout: [Add]  title (centered)  [Notifications]
  *
- * The container is transparent so the parent surface colour shows through,
- * keeping the bar consistent across light, dark, and dynamic-colour themes.
+ * The container is transparent so the parent surface color shows through,
+ * keeping the bar consistent across light, dark, and dynamic-color themes.
  *
  * @param title               Text displayed as the bar heading.
  * @param onAddClick          Callback for the leading Add action.
@@ -67,5 +68,15 @@ fun TopBar(
             containerColor         = Color.Transparent,
             scrolledContainerColor = Color.Transparent
         )
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun TopBarPreview() {
+    TopBar(
+        title = "Bondhu",
+        onAddClick = {},
+        onNotificationClick = {}
     )
 }

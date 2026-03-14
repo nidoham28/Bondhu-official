@@ -41,5 +41,5 @@ data class Conversation(
     var updatedAt: Timestamp? = null,
     var subscriberCount: Long = 0L,
     var messageCount: Long = 0L,
-    var translated: Boolean = false,
+    var translated: Boolean = false
 )

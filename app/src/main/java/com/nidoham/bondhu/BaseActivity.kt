@@ -45,8 +45,8 @@ abstract class BaseActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val PREFS_NAME        = "app_prefs"
-        private const val KEY_LANGUAGE      = "app_language"
+        private const val PREFS_NAME         = "app_prefs"
+        private const val KEY_LANGUAGE       = "app_language"
         private const val KEY_SYSTEM_DEFAULT = "system_default"
 
         /**
@@ -70,6 +70,9 @@ abstract class BaseActivity : ComponentActivity() {
          * Returns a [Context] configured with the persisted app language, or the
          * receiver unchanged if the system default is active or no language has
          * been saved.
+         *
+         * Uses [Locale.Builder] instead of the deprecated [Locale] string constructor
+         * to safely resolve ISO 639 language codes on API 26+.
          */
         private fun Context.applyAppLanguage(): Context {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -78,7 +81,10 @@ abstract class BaseActivity : ComponentActivity() {
             val languageCode = prefs.getString(KEY_LANGUAGE, null) ?: return this
 
             return try {
-                val locale     = Locale(languageCode)
+                val locale = Locale.Builder()
+                    .setLanguage(languageCode)
+                    .build()
+
                 val localeList = LocaleList(locale)
                 Locale.setDefault(locale)
                 LocaleList.setDefault(localeList)

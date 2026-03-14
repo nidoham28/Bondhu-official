@@ -78,7 +78,7 @@ fun ChatScreen(
     // global so each screen instance maintains independent recency state.
     val recentEmojis = remember { mutableStateListOf<String>() }
 
-    // rememberSaveable is not needed here — sheet visibility does not need to
+    // rememberSavable is not needed here — sheet visibility does not need to
     // survive process death, and the overhead of serialization is unnecessary.
     var showEmojiSheet by remember { mutableStateOf(false) }
 

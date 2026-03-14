@@ -51,7 +51,7 @@ class MessageViewModel @Inject constructor(
      * [ConcurrentHashMap] is used because [async] blocks inside [coroutineScope]
      * may access the map concurrently from separate coroutines.
      */
-    private val peerUserCache = ConcurrentHashMap<String, User?>()
+    private val peerUserCache = ConcurrentHashMap<String, User>()
 
     /**
      * Live stream of the current user's personal conversations, each enriched

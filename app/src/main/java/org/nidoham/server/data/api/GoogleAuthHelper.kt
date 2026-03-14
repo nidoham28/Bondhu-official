@@ -18,7 +18,7 @@ class GoogleAuthHelper @Inject constructor(
 ) {
 
     /**
-     * Entry point. Attempts silent sign-in with a previously authorised account first.
+     * Entry point. Attempts silent sign-in with a previously authorized account first.
      * Falls back to the full account picker if none is found.
      *
      * @param activityContext MUST be an Activity context to show the bottom sheet UI.
@@ -72,6 +72,10 @@ class GoogleAuthHelper @Inject constructor(
 
         // Throws natively if it fails (e.g. NoCredentialException)
         val response = credentialManager.getCredential(context, request)
+
+        if (response.credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            throw Exception("Unexpected credential type: ${response.credential.type}")
+        }
 
         // Parse the raw credential
         val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(response.credential.data)

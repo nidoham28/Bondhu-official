@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
  *
  * The avatar size scales with [windowSizeClass] (40 dp on compact, 48 dp on larger
  * screens). The bar background uses `MaterialTheme.colorScheme.background` rather
- * than a surface-level colour so it blends with the wallpaper on transparent
+ * than a surface-level color so it blends with the wallpaper on transparent
  * Scaffold configurations.
  *
  * @param peerName Peer display name shown as the title.
@@ -96,7 +96,7 @@ fun ChatTopBar(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                val statusText = if (isOnline) "" else lastSeenTimestamp
+                val statusText = if (isOnline) "active" else formatLastSeen(lastSeenTimestamp)
 
                 if (statusText.isNotEmpty()) {
                     Text(

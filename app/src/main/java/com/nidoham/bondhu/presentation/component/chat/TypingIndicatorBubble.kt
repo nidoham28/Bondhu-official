@@ -33,7 +33,7 @@ private const val TYPING_CYCLE_MS = 1200
  *
  * Each dot pulses its opacity in a staggered wave pattern (150 ms apart) using
  * an [androidx.compose.animation.core.InfiniteTransition]. The bubble adopts
- * the same shape and colour tokens as [ReceivedMessageWidget] so it appears
+ * the same shape and color tokens as [ReceivedMessageWidget] so it appears
  * visually consistent with incoming messages.
  *
  * This composable is shown and hidden by [MessageList] via an [AnimatedVisibility]

@@ -26,7 +26,7 @@ import kotlinx.coroutines.delay
  * and layers all control overlays on top via [PlayerControlsOverlay].
  *
  * The [player] parameter is typed as [Player] — the stable Media3 interface —
- * rather than `ExoPlayer`. At runtime it is backed by
+ * rather than `ExoPlayer`. At runtime, it is backed by
  * [androidx.media3.session.MediaBrowser], which implements [Player].
  * [PlayerView.setPlayer] accepts [Player] directly so no cast is needed.
  *

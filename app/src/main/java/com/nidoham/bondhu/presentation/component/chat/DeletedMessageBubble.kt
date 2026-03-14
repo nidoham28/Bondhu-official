@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
  * the visual rhythm of the conversation without revealing the original content.
  *
  * The scrim background keeps the notice legible over any wallpaper without
- * requiring theme-aware colour tokens.
+ * requiring theme-aware color tokens.
  *
  * @param isMine `true` when the deleted message was sent by the local user;
  *               controls horizontal alignment.

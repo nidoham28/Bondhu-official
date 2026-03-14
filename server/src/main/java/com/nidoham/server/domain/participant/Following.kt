@@ -14,7 +14,6 @@ import com.google.firebase.firestore.ServerTimestamp
  *                      was established.
  */
 data class Following(
-    @DocumentId
     var uid: String = "",
     @ServerTimestamp
     var followedAt: Timestamp? = null,
