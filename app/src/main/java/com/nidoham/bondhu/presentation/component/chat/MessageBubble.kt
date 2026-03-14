@@ -37,7 +37,7 @@ import com.nidoham.server.domain.message.Message
  * - Renders a centred timestamp chip on tap, animated with a slide-and-fade
  *   entrance so it does not disrupt surrounding bubble positions.
  * - Attaches the small peer avatar to the left of incoming messages, matching
- *   the Instagram Direct layout where the avatar anchors to the bottom of a run.
+ *   the WhatsApp Direct layout where the avatar anchors to the bottom of a run.
  *
  * **Note:** Date-separator chips are the responsibility of [MessageList], not
  * this composable.
@@ -62,15 +62,6 @@ internal fun MessageBubble(
     peerAvatarUrl: String,
     peerName: String
 ) {
-    // Early-exit for deleted messages: renders a tombstone in place of content.
-
-    /**
-     * if (message.deleted) {
-     *    DeletedMessageBubble(isMine)
-     *    return
-     *  }
-     */
-
     var showTimestamp by remember { mutableStateOf(false) }
     val timestamp = remember(message.timestamp) { message.timestamp?.toDate()?.toTimeString() }
 
