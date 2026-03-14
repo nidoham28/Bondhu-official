@@ -8,11 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
-import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.PlaylistAdd
-import androidx.compose.material.icons.rounded.Reply
-import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
@@ -59,24 +55,24 @@ fun PlayerActionRow(modifier: Modifier = Modifier) {
         // Like + dislike share one pill (YouTube style)
         Row(verticalAlignment = Alignment.CenterVertically) {
             ActionItem(
-                icon  = Icons.Rounded.ThumbUp,
-                label = "Like",
-                tint  = if (liked) activeColor else inactiveColor,
+                icon    = Icons.Rounded.ThumbUp,
+                label   = "Like",
+                tint    = if (liked) activeColor else inactiveColor,
                 onClick = {
                     liked    = !liked
                     if (liked) disliked = false
                 },
             )
             VerticalDivider(
-                modifier  = Modifier
+                modifier = Modifier
                     .size(height = 20.dp, width = 1.dp)
                     .padding(horizontal = 2.dp),
-                color     = MaterialTheme.colorScheme.outlineVariant,
+                color    = MaterialTheme.colorScheme.outlineVariant,
             )
             ActionItem(
-                icon  = Icons.Rounded.ThumbDown,
-                label = "Dislike",
-                tint  = if (disliked) activeColor else inactiveColor,
+                icon    = Icons.Rounded.ThumbDown,
+                label   = "Dislike",
+                tint    = if (disliked) activeColor else inactiveColor,
                 onClick = {
                     disliked = !disliked
                     if (disliked) liked = false

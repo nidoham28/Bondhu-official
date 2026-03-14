@@ -6,10 +6,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -111,8 +109,11 @@ fun PlayerControlsOverlay(
             .fillMaxSize()
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap         = { controlsVisible = !controlsVisible; if (controlsVisible && uiState.isPlaying) scheduleHide() },
-                    onDoubleTap   = { offset ->
+                    onTap       = {
+                        controlsVisible = !controlsVisible
+                        if (controlsVisible && uiState.isPlaying) scheduleHide()
+                    },
+                    onDoubleTap = { offset ->
                         when {
                             offset.x < size.width / 3f -> {
                                 val newPos = (positionMs - SEEK_AMOUNT_MS).coerceAtLeast(0L)
@@ -140,7 +141,9 @@ fun PlayerControlsOverlay(
             visible  = rewindFlash,
             enter    = fadeIn(),
             exit     = fadeOut(),
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 24.dp),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 24.dp),
         ) {
             DoubleTapIndicator(icon = Icons.Rounded.Replay10, label = "-10s")
         }
@@ -149,7 +152,9 @@ fun PlayerControlsOverlay(
             visible  = forwardFlash,
             enter    = fadeIn(),
             exit     = fadeOut(),
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 24.dp),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 24.dp),
         ) {
             DoubleTapIndicator(icon = Icons.Rounded.Forward10, label = "+10s")
         }
@@ -171,7 +176,7 @@ fun PlayerControlsOverlay(
                     modifier    = Modifier.align(Alignment.TopCenter),
                 )
 
-                // Center controls — hide during loading/error; those overlays take precedence
+                // Center controls — hidden during loading/error; those overlays take precedence
                 if (uiState.phase == PlayerUiState.Phase.Ready) {
                     PlayerCenterControls(
                         isPlaying   = uiState.isPlaying,

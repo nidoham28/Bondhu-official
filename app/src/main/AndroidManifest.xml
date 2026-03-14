@@ -2,23 +2,36 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Required on API 28+ for any foreground service -->
+    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- Required on API 34+ when the foreground service plays media -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- Push notifications — runtime request required on API 33+ -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" /> <!-- Media access — granular permission on API 33+, legacy below -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Player: keep CPU alive during background playback -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Player: keep Wi-Fi radio at full performance during background playback -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- Push notifications — runtime request required on API 33+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Media access — granular permission on API 33+, legacy below -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" /> <!-- Camera — android:required="false" allows installation on devices without one -->
+        android:maxSdkVersion="28" />
+
+    <!-- Camera — android:required="false" allows installation on devices without one -->
     <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature
@@ -41,20 +54,28 @@
         android:usesCleartextTraffic="false"
         tools:targetApi="33">
 
+        <!--
+            screenOrientation="portrait" sets the initial orientation anchor so
+            the first requestedOrientation call in PlayerActivity is deterministic.
+            smallestScreenSize is added to configChanges to prevent recreation on
+            foldables and multi-window resize events.
+        -->
         <activity
             android:name=".PlayerActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false" />
+
         <activity
             android:name=".SplashActivity"
             android:exported="true"
             android:theme="@style/Theme.Bondhu.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity> <!-- Authentication flow -->
+        </activity>
+
+        <!-- Authentication flow -->
         <activity
             android:name=".LoginActivity"
             android:exported="false"
@@ -70,16 +91,22 @@
         <activity
             android:name=".CompleteProfileActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" /> <!-- Main shell — singleTask prevents duplicate instances on re-launch or deep-link -->
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Main shell — singleTask prevents duplicate instances on re-launch or deep-link -->
         <activity
             android:name=".MainActivity"
             android:exported="false"
             android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize" /> <!-- Chat — adjustResize keeps the message list above the soft keyboard -->
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Chat — adjustResize keeps the message list above the soft keyboard -->
         <activity
             android:name=".ChatActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" /> <!-- FileProvider — exposes app-private files via content:// URIs for camera and image sharing -->
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- FileProvider — exposes app-private files via content:// URIs for camera and image sharing -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileProvider"
@@ -90,6 +117,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!--
+            exported="true" is required for MediaSessionService: the system and
+            external MediaController clients (system UI, Wear OS, Android Auto)
+            must be able to bind to the session token path.
+        -->
         <service
             android:name=".player.PlayerService"
             android:exported="true"
@@ -98,6 +130,7 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
     </application>
 
 </manifest>
