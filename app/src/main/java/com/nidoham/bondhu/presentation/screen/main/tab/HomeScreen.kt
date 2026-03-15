@@ -14,7 +14,5 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun HomeScreen() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // Placeholder UI
-        Icon(Icons.Filled.Home, contentDescription = null, modifier = Modifier.size(64.dp))
     }
 }

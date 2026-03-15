@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ErrorOutline // FIX 3: correct namespace
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,12 +38,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel // FIX 1: correct import path
 import coil.compose.AsyncImage
+import com.nidoham.bondhu.R
 import com.nidoham.bondhu.presentation.component.profile.PostItem
 import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
@@ -63,7 +67,7 @@ fun ProfileScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isOnline by viewModel.isTargetOnline.collectAsState()
-    val context = LocalContext.current                       // Fixed: needed for NavigationHelper
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     val isDataStale = remember(uiState.user, uiState.isOwner, profileUserId) {
@@ -122,12 +126,8 @@ fun ProfileScreen(
                         if (uiState.isOwner) {
                             onShareProfile()
                         } else {
-                            // Fixed: ViewModel fetches current user + resolves/creates
-                            // the conversation, then we navigate to ChatActivity.
                             viewModel.startConversation(state.user.uid) { conversationId ->
-                                // Primary route: open ChatActivity directly via NavigationHelper
                                 NavigationHelper.navigateToChat(context, conversationId)
-                                // Secondary hook: notify NavGraph caller if provided
                                 onMessage?.invoke(conversationId)
                             }
                         }
@@ -174,22 +174,28 @@ private fun ProfileShimmerLoading() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(24.dp))
-        Box(Modifier
-            .size(100.dp)
-            .clip(CircleShape)
-            .shimmerEffect())
+        Box(
+            Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .shimmerEffect()
+        )
         Spacer(Modifier.height(16.dp))
-        Box(Modifier
-            .width(150.dp)
-            .height(24.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .shimmerEffect())
+        Box(
+            Modifier
+                .width(150.dp)
+                .height(24.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .shimmerEffect()
+        )
         Spacer(Modifier.height(8.dp))
-        Box(Modifier
-            .width(100.dp)
-            .height(16.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .shimmerEffect())
+        Box(
+            Modifier
+                .width(100.dp)
+                .height(16.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .shimmerEffect()
+        )
         Spacer(Modifier.height(24.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             repeat(3) {
@@ -217,16 +223,20 @@ private fun ProfileShimmerLoading() {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(Modifier
-                .weight(1f)
-                .height(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .shimmerEffect())
-            Box(Modifier
-                .weight(1f)
-                .height(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .shimmerEffect())
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .shimmerEffect()
+            )
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .shimmerEffect()
+            )
         }
         Spacer(Modifier.height(32.dp))
         repeat(3) {
@@ -282,7 +292,7 @@ private fun ErrorScreen(error: String, onRetry: () -> Unit, onNavigateBack: () -
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            Icons.Default.ErrorOutline,
+            Icons.Outlined.ErrorOutline, // FIX 3: was Icons.Default.ErrorOutline
             null,
             tint = MaterialTheme.colorScheme.error,
             modifier = Modifier.size(48.dp)
@@ -321,9 +331,11 @@ private fun ProfileContent(
     onSecondaryClick: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
             Spacer(Modifier.height(24.dp))
             ProfileHeader(user = user, isOwner = uiState.isOwner, isOnline = isOnline)
             Spacer(Modifier.height(24.dp))
@@ -422,10 +434,7 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
                         .clip(CircleShape)
                         .background(
                             Brush.linearGradient(
-                                listOf(
-                                    Color(0xFF6366F1),
-                                    Color(0xFF8B5CF6)
-                                )
+                                listOf(Color(0xFF6366F1), Color(0xFF8B5CF6))
                             )
                         ),
                     contentAlignment = Alignment.Center
@@ -460,12 +469,29 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
         }
 
         Spacer(Modifier.height(16.dp))
-        Text(
-            name,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+
+        // FIX 2: added Arrangement.Center + verticalAlignment so name and badge
+        // are centered together, and removed the broken fillMaxWidth + align combo.
+        // Also added a Spacer between the text and the badge so they don't crowd.
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                name,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            if (user.verified) {
+                Spacer(Modifier.width(4.dp))
+                Image(
+                    painter = painterResource(R.drawable.verified),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
 
         user.username.takeIf { it.isNotBlank() }?.let {
             Spacer(Modifier.height(2.dp))
@@ -483,9 +509,8 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
                     .size(8.dp)
                     .clip(CircleShape)
                     .background(
-                        if (isOnline) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                            alpha = 0.4f
-                        )
+                        if (isOnline) Color(0xFF10B981)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     )
             )
             Spacer(Modifier.width(6.dp))
@@ -578,9 +603,11 @@ private fun ActionButtons(
 ) {
     val primaryLabel = if (isOwner) "Edit Profile" else if (isFollowing) "Unfollow" else "Follow"
     val primaryContainerColor =
-        if (isOwner || !isFollowing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+        if (isOwner || !isFollowing) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.surfaceVariant
     val primaryContentColor =
-        if (isOwner || !isFollowing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+        if (isOwner || !isFollowing) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(
         modifier = Modifier

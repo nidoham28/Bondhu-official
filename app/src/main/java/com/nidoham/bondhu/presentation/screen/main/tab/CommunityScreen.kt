@@ -9,7 +9,4 @@ import androidx.compose.ui.Modifier
 
 @Composable
 fun CommunityScreen() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Community — coming soon")
-    }
 }
