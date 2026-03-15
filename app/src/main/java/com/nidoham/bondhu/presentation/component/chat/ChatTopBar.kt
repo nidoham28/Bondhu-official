@@ -54,7 +54,7 @@ fun ChatTopBar(
     peerName: String,
     peerAvatarUrl: String,
     isOnline: Boolean,
-    lastSeenTimestamp: String,
+    statusText: String,
     onNavigateBack: () -> Unit,
     windowSizeClass: WindowWidthClass
 ) {
@@ -95,8 +95,6 @@ fun ChatTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-
-                val statusText = if (isOnline) "active" else formatLastSeen(lastSeenTimestamp)
 
                 if (statusText.isNotEmpty()) {
                     Text(

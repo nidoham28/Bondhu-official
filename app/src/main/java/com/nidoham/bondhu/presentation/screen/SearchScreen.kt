@@ -1,6 +1,5 @@
-package com.nidoham.bondhu.presentation.screen.main.tab
+package com.nidoham.bondhu.presentation.screen
 
-import android.content.Intent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -23,6 +22,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.Person
@@ -49,9 +49,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
-import com.nidoham.bondhu.PlayerActivity
 import com.nidoham.bondhu.presentation.component.search.SearchResults
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.screen.search.YoutubeSearchScreen
@@ -61,7 +60,8 @@ import com.nidoham.bondhu.presentation.viewmodel.SearchViewModel
 @Composable
 fun SearchScreen(
     viewModel   : SearchViewModel = hiltViewModel(),
-    onUserClick : (String) -> Unit
+    onUserClick : (String) -> Unit,
+    onBack      : () -> Unit
 ) {
     val context      = LocalContext.current
     val searchQuery  by viewModel.searchQuery.collectAsState()

@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.nidoham.bondhu.R
-import com.nidoham.bondhu.presentation.component.common.TopBar
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.viewmodel.ConversationWithUser
 import com.nidoham.bondhu.presentation.viewmodel.MessageViewModel
@@ -48,13 +47,6 @@ fun MessageScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-
-        TopBar(
-            title = stringResource(R.string.app_name),
-            onNotificationClick = {},
-            onAddClick = {},
-        )
-
         when {
 
             conversations.isEmpty() -> {

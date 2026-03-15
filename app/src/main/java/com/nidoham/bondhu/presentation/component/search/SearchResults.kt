@@ -19,10 +19,10 @@ import androidx.compose.ui.unit.sp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
-import com.nidoham.bondhu.presentation.screen.main.tab.EmptyState
-import com.nidoham.bondhu.presentation.screen.main.tab.ErrorState
-import com.nidoham.bondhu.presentation.screen.main.tab.IdleState
-import com.nidoham.bondhu.presentation.screen.main.tab.LoadingState
+import com.nidoham.bondhu.presentation.screen.EmptyState
+import com.nidoham.bondhu.presentation.screen.ErrorState
+import com.nidoham.bondhu.presentation.screen.IdleState
+import com.nidoham.bondhu.presentation.screen.LoadingState
 import com.nidoham.server.domain.participant.User
 
 @Composable

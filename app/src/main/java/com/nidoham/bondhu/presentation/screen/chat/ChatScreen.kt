@@ -105,7 +105,7 @@ fun ChatScreen(
                     peerName        = uiState.peerName,
                     peerAvatarUrl   = uiState.peerAvatarUrl,
                     isOnline        = uiState.isPeerOnline,
-                    lastSeenTimestamp = uiState.lastSeen,
+                    statusText = uiState.lastSeen,
                     onNavigateBack  = onBack,
                     windowSizeClass = windowClass,
                 )

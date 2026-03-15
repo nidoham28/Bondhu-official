@@ -9,13 +9,15 @@ import com.nidoham.bondhu.ForgotPasswordActivity
 import com.nidoham.bondhu.LoginActivity
 import com.nidoham.bondhu.MainActivity
 import com.nidoham.bondhu.PlayerActivity
+import com.nidoham.bondhu.ProfileActivity
 import com.nidoham.bondhu.R
 import com.nidoham.bondhu.RegisterActivity
+import com.nidoham.bondhu.SearchActivity
 
 object NavigationHelper {
 
     // Intent extras
-    private const val EXTRA_USER_ID         = "extra_user_id"
+    const val EXTRA_USER_ID                 = "extra_user_id"
     const val EXTRA_CONVERSATION_ID         = "extra_conversation_id"
     const val EXTRA_TARGET_ID               = "extra_target_id"
     const val EXTRA_STREAM_URL              = "extra_stream_url"
@@ -118,6 +120,24 @@ object NavigationHelper {
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(EXTRA_STREAM_URL, streamUrl)
             title?.let { putExtra(EXTRA_TITLE, it) }
+        }
+        launch(context = context, intent = intent, transition = slideTransition(context))
+    }
+
+    /**
+     * Opens [SearchActivity].
+     *
+     * Uses a slide transition — consistent with other content-discovery destinations.
+     */
+    fun navigateToSearch(context: Context) = launch(
+        context    = context,
+        intent     = Intent(context, SearchActivity::class.java),
+        transition = slideTransition(context)
+    )
+
+    fun navigateToProfile(context: Context, userId: String) {
+        val intent = Intent(context, ProfileActivity::class.java).apply {
+            putExtra(EXTRA_USER_ID, userId)
         }
         launch(context = context, intent = intent, transition = slideTransition(context))
     }
