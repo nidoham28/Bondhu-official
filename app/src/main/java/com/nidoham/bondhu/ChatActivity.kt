@@ -11,14 +11,8 @@ import com.nidoham.bondhu.presentation.screen.chat.ChatScreen
 import com.nidoham.bondhu.presentation.viewmodel.ChatViewModel
 import com.nidoham.bondhu.ui.theme.AppTheme
 import dagger.hilt.android.AndroidEntryPoint
+import timber.log.Timber
 
-/**
- * Host activity for the one-to-one chat screen.
- *
- * Expects [NavigationHelper.EXTRA_CONVERSATION_ID] in the launching intent.
- * If [NavigationHelper.EXTRA_TARGET_ID] is present, the conversation is treated
- * as an AI chat, and the ViewModel is configured accordingly.
- */
 @AndroidEntryPoint
 class ChatActivity : ComponentActivity() {
 
@@ -27,26 +21,33 @@ class ChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Extract and validate required Conversation ID
+        // 1. Extract Data from Intent
         val conversationId = intent.getStringExtra(NavigationHelper.EXTRA_CONVERSATION_ID)
             ?.takeIf { it.isNotBlank() }
 
+        val targetId = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
+            ?.takeIf { it.isNotBlank() }
+
+        // 2. Validate Critical Data
         if (conversationId == null) {
-            // Invalid state, cannot proceed without a conversation ID
+            Timber.e("ChatActivity: Missing EXTRA_CONVERSATION_ID. Finishing.")
             finish()
             return
         }
 
-        // Extract optional AI User ID (Target ID)
-        val aiUserId = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
-            ?.takeIf { it.isNotBlank() }
+        // 3. Log Activity Startup Info
+        Timber.i("======================================================")
+        Timber.i("ChatActivity Started")
+        Timber.i("Conversation ID: $conversationId")
+        Timber.i("Target ID (AI/Peer): $targetId")
+        Timber.i("======================================================")
 
-        // Initialize the chat session
-        viewModel.initChat(conversationId)
+        // 4. Initialize ViewModel
+        // We pass the targetId (if exists) directly to initChat to ensure
+        // the state is ready before streams begin.
+        viewModel.initChat(conversationId = conversationId, targetId = targetId)
 
-        // Configure AI mode if an AI User ID is provided
-        aiUserId?.let { viewModel.configureAi(it) }
-
+        // 5. Set Content
         setContent {
             AppTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()

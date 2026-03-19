@@ -24,10 +24,6 @@ import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI State
-// ─────────────────────────────────────────────────────────────────────────────
-
 data class ChatUiState(
     val messages: List<Message> = emptyList(),
     val inputText: String = "",
@@ -40,10 +36,6 @@ data class ChatUiState(
     val isPeerTyping: Boolean = false,
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ViewModel
-// ─────────────────────────────────────────────────────────────────────────────
-
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
@@ -52,12 +44,12 @@ class ChatViewModel @Inject constructor(
     private val aiMessageManager: AiMessageManager
 ) : ViewModel() {
 
-    // ── Thresholds ────────────────────────────────────────────────────────────
+    companion object {
+        private const val TAG = "ChatViewModelLog"
+    }
 
     private val onlineStalenessMs: Long = TimeUnit.MINUTES.toMillis(15)
     private val selfTypingIdleStopMs: Long = 5_000L
-
-    // ── UI state ──────────────────────────────────────────────────────────────
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -65,28 +57,35 @@ class ChatViewModel @Inject constructor(
     val currentUserId: String
         get() = firebaseAuth.currentUser?.uid ?: ""
 
-    // ── Session tracking ──────────────────────────────────────────────────────
-
+    // Session tracking
     private var currentConversationId: String? = null
     private var currentPeerId: String? = null
+    private var targetId: String = ""
 
-    // The User ID of the AI participant (if this is an AI conversation)
-    private var aiUserId: String = ""
-
-    // ── Coroutine jobs ────────────────────────────────────────────────────────
-
+    // Coroutine jobs
     private var chatObservationJob: Job? = null
     private var peerProfileJob: Job? = null
     private var peerPresenceJob: Job? = null
     private var peerTypingJob: Job? = null
     private var selfTypingStopJob: Job? = null
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Entry Point
-    // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Entry point for the ViewModel.
+     * @param conversationId The ID of the conversation.
+     * @param targetId Optional. If present, configures the session for AI interaction immediately.
+     */
+    fun initChat(conversationId: String, targetId: String? = null) {
+        if (currentConversationId == conversationId) {
+            Timber.tag(TAG).d("initChat: Already initialized for $conversationId")
+            return
+        }
 
-    fun initChat(conversationId: String) {
-        if (currentConversationId == conversationId) return
+        Timber.tag(TAG).i("────────────────────────────────────────")
+        Timber.tag(TAG).i("INIT CHAT START")
+        Timber.tag(TAG).i("Conversation ID: $conversationId")
+        Timber.tag(TAG).i("Current User ID: $currentUserId")
+        Timber.tag(TAG).i("Target ID: $targetId")
+        Timber.tag(TAG).i("────────────────────────────────────────")
 
         cancelPeerJobs()
         stopSelfTypingInternal()
@@ -94,25 +93,32 @@ class ChatViewModel @Inject constructor(
         currentConversationId = conversationId
         currentPeerId = null
 
+        // Set AI ID immediately if provided
+        targetId?.let { this.targetId = it }
+
         chatObservationJob?.cancel()
         chatObservationJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            // Stream 1: Resolve peer UID from the participants sub-collection.
+            // Stream 1: Participants
             launch {
                 messageRepository.observeParticipants(conversationId)
                     .catch { e ->
-                        Timber.w(e, "ChatViewModel: participant stream error for $conversationId")
+                        Timber.tag(TAG).e(e, "Participant stream error for $conversationId")
                     }
                     .collect { participants ->
+                        Timber.tag(TAG).d("Participants updated: count=${participants.size}")
+
                         val peerId = participants.firstOrNull { it.uid != currentUserId }?.uid
 
                         if (peerId == null) {
-                            Timber.w("ChatViewModel: could not resolve peer UID for $conversationId")
+                            Timber.tag(TAG).w("Could not resolve peer UID (User might be alone in chat)")
                             return@collect
                         }
 
                         if (peerId == currentPeerId) return@collect
+
+                        Timber.tag(TAG).i("Peer resolved: $peerId")
                         currentPeerId = peerId
 
                         cancelPeerJobs()
@@ -122,20 +128,23 @@ class ChatViewModel @Inject constructor(
                     }
             }
 
-            // Stream 2: Live conversation metadata (reserved for future use).
+            // Stream 2: Conversation Metadata
             launch {
                 messageRepository.observeConversation(conversationId)
-                    .collect { /* metadata-driven UI updates go here */ }
+                    .collect {
+                        // Reserved for future use
+                    }
             }
 
-            // Stream 3: Live message list.
+            // Stream 3: Messages
             launch {
                 messageRepository.observeMessages(conversationId)
                     .catch { e ->
-                        Timber.e(e, "ChatViewModel: message stream error for $conversationId")
+                        Timber.tag(TAG).e(e, "Message stream error for $conversationId")
                         _uiState.update { it.copy(isLoading = false, isSendError = true) }
                     }
                     .collect { incoming ->
+                        Timber.tag(TAG).d("Messages received: count=${incoming.size}")
                         _uiState.update { it.copy(messages = incoming.reversed(), isLoading = false) }
                         markUndeliveredMessages(conversationId, incoming)
                     }
@@ -144,24 +153,18 @@ class ChatViewModel @Inject constructor(
     }
 
     /**
-     * Configures this conversation for AI replies.
-     * Call this after [initChat] if the peer is an AI bot.
-     *
-     * @param userId The Firebase UID of the AI participant.
+     * Explicitly configures AI mode after initialization.
      */
     fun configureAi(userId: String) {
-        this.aiUserId = userId
-        Timber.d("ChatViewModel: AI configured for userId=$userId")
+        Timber.tag(TAG).i("Configuring AI Mode for User ID: $userId")
+        this.targetId = userId
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Peer Profile
-    // ─────────────────────────────────────────────────────────────────────────
-
     private suspend fun loadPeerProfile(peerId: String) {
+        Timber.tag(TAG).d("Loading profile for peer: $peerId")
         val user = userRepository.fetchUser(peerId)
             .getOrElse { e ->
-                Timber.w(e, "ChatViewModel: failed to load peer profile for $peerId")
+                Timber.tag(TAG).e(e, "Failed to load peer profile")
                 return
             } ?: return
 
@@ -174,10 +177,6 @@ class ChatViewModel @Inject constructor(
             )
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Peer Presence
-    // ─────────────────────────────────────────────────────────────────────────
 
     private suspend fun observePeerPresence(peerId: String) {
         userRepository.observeUserStatus(peerId).collect { status ->
@@ -195,10 +194,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Peer Typing
-    // ─────────────────────────────────────────────────────────────────────────
-
     private suspend fun observePeerTyping(conversationId: String, peerId: String) {
         messageRepository.observeTyping(conversationId)
             .catch { _uiState.update { it.copy(isPeerTyping = false) } }
@@ -206,10 +201,6 @@ class ChatViewModel @Inject constructor(
                 _uiState.update { it.copy(isPeerTyping = peerId in typingState.typingUserIds) }
             }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Undelivered Message Promotion
-    // ─────────────────────────────────────────────────────────────────────────
 
     private fun markUndeliveredMessages(conversationId: String, messages: List<Message>) {
         val undeliveredIds = messages
@@ -230,10 +221,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // UI Events
-    // ─────────────────────────────────────────────────────────────────────────
-
     fun onInputChanged(text: String) {
         val conversationId = currentConversationId ?: return
         _uiState.update { it.copy(inputText = text, isSendError = false) }
@@ -250,14 +237,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Sends the current input as a user message.
-     * If AI is configured, it delegates the reply generation to [AiMessageManager].
-     */
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         val conversationId = currentConversationId
-        if (text.isEmpty() || conversationId == null) return
+
+        if (text.isEmpty() || conversationId == null) {
+            Timber.tag(TAG).w("SendMessage aborted: Text empty or ConvId null")
+            return
+        }
+
+        Timber.tag(TAG).i("────────────────────────────────────────")
+        Timber.tag(TAG).i("SEND MESSAGE START")
+        Timber.tag(TAG).i("Content: $text")
+        Timber.tag(TAG).i("Conversation: $conversationId")
+        Timber.tag(TAG).i("Sender (Me): $currentUserId")
+        Timber.tag(TAG).i("────────────────────────────────────────")
 
         _uiState.update { it.copy(inputText = "", isSendError = false) }
         stopSelfTypingInternal()
@@ -272,6 +266,8 @@ class ChatViewModel @Inject constructor(
 
             messageRepository.sendMessage(conversationId, userMessage)
                 .onSuccess { messageId ->
+                    Timber.tag(TAG).i("Message sent successfully to DB. ID: $messageId")
+
                     val preview = MessagePreview(
                         messageId = messageId,
                         parentId = conversationId,
@@ -281,45 +277,38 @@ class ChatViewModel @Inject constructor(
                     )
 
                     messageRepository.updateLastMessage(conversationId, preview)
-                        .onFailure { e ->
-                            Timber.w(e, "ChatViewModel: failed to update lastMessage for $conversationId")
-                        }
+                        .onFailure { e -> Timber.tag(TAG).e(e, "Failed to update lastMessage preview") }
 
                     messageRepository.incrementMessageCount(conversationId)
-                        .onFailure { e ->
-                            Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
-                        }
+                        .onFailure { e -> Timber.tag(TAG).e(e, "Failed to increment message count") }
 
-                    // Trigger AI response if configured
-                    if (aiUserId.isNotEmpty()) {
+                    // Trigger AI Logic
+                    if (true) {
+                        Timber.tag(TAG).i("AI Mode Active: Requesting reply from AI ($targetId)")
                         launch {
                             aiMessageManager.push(
                                 userMessage = text,
-                                targetId = aiUserId,
+                                targetId = targetId,
                                 conversationId = conversationId
                             )
                         }
+                    } else {
+                        Timber.tag(TAG).d("AI Mode Inactive: No AI user ID set.")
                     }
                 }
-                .onFailure {
+                .onFailure { e ->
+                    Timber.tag(TAG).e(e, "Failed to send user message")
                     _uiState.update { it.copy(inputText = text, isSendError = true) }
                 }
         }
     }
 
-    fun isMine(message: Message): Boolean =
-        message.senderId == currentUserId
+    fun isMine(message: Message): Boolean = message.senderId == currentUserId
 
-    /** Returns true if the peer has promoted this message's status to [MessageStatus.READ]. */
     fun isReadByPeer(message: Message): Boolean =
-        message.senderId == currentUserId &&
-                message.status == MessageStatus.READ.value
+        message.senderId == currentUserId && message.status == MessageStatus.READ.value
 
     fun clearError() = _uiState.update { it.copy(isSendError = false) }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Internal Helpers
-    // ─────────────────────────────────────────────────────────────────────────
 
     private fun formatLastSeen(lastSeenMs: Long): String =
         if (lastSeenMs == 0L) "" else lastSeenMs.toTimeAgo()
@@ -338,19 +327,15 @@ class ChatViewModel @Inject constructor(
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
 
-        // Optimization: No need to broadcast typing status to AI conversations
-        if (aiUserId.isNotEmpty()) return
+        if (targetId.isNotEmpty()) return
 
         viewModelScope.launch {
             messageRepository.setTyping(conversationId, uid = currentUserId, typing = false)
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Cleanup
-    // ─────────────────────────────────────────────────────────────────────────
-
     override fun onCleared() {
+        Timber.tag(TAG).i("ViewModel Cleared - Cleaning up resources")
         stopSelfTypingInternal()
         cancelPeerJobs()
         chatObservationJob?.cancel()

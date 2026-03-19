@@ -26,7 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.ErrorOutline // FIX 3: correct namespace
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,18 +43,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel // FIX 1: correct import path
+import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.nidoham.bondhu.R
 import com.nidoham.bondhu.presentation.component.profile.PostItem
-import com.nidoham.bondhu.presentation.component.profile.ProfileUiState
 import com.nidoham.bondhu.presentation.navigation.NavigationHelper
+import com.nidoham.bondhu.presentation.viewmodel.ProfileUiState
 import com.nidoham.bondhu.presentation.viewmodel.ProfileViewModel
 import com.nidoham.server.domain.participant.User
-
-// ─────────────────────────────────────────────────────────────
-// Root screen
-// ─────────────────────────────────────────────────────────────
 
 @Composable
 fun ProfileScreen(
@@ -126,8 +122,14 @@ fun ProfileScreen(
                         if (uiState.isOwner) {
                             onShareProfile()
                         } else {
+                            // FIX: Pass the target user ID (state.user.uid) to the ViewModel
+                            // and then to NavigationHelper so ChatActivity knows who we are talking to.
                             viewModel.startConversation(state.user.uid) { conversationId ->
-                                NavigationHelper.navigateToChat(context, conversationId)
+                                NavigationHelper.navigateToChat(
+                                    context = context,
+                                    conversationId = conversationId,
+                                    targetUid = state.user.uid // Crucial for AI identification
+                                )
                                 onMessage?.invoke(conversationId)
                             }
                         }
@@ -144,10 +146,6 @@ fun ProfileScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Screen State
-// ─────────────────────────────────────────────────────────────
-
 private sealed class ScreenState {
     data object Loading : ScreenState()
     data class Content(val user: User) : ScreenState()
@@ -159,10 +157,6 @@ private fun AnimatedContentTransitionScope<ScreenState>.screenTransitionSpec(): 
             scaleIn(initialScale = 0.95f, animationSpec = tween(300)) togetherWith
             fadeOut(animationSpec = tween(200)) +
             scaleOut(targetScale = 1.05f, animationSpec = tween(200))
-
-// ─────────────────────────────────────────────────────────────
-// Shimmer Loading
-// ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun ProfileShimmerLoading() {
@@ -278,10 +272,6 @@ private fun Modifier.shimmerEffect(): Modifier {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Error screen
-// ─────────────────────────────────────────────────────────────
-
 @Composable
 private fun ErrorScreen(error: String, onRetry: () -> Unit, onNavigateBack: () -> Unit) {
     Column(
@@ -292,7 +282,7 @@ private fun ErrorScreen(error: String, onRetry: () -> Unit, onNavigateBack: () -
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            Icons.Outlined.ErrorOutline, // FIX 3: was Icons.Default.ErrorOutline
+            Icons.Outlined.ErrorOutline,
             null,
             tint = MaterialTheme.colorScheme.error,
             modifier = Modifier.size(48.dp)
@@ -317,10 +307,6 @@ private fun ErrorScreen(error: String, onRetry: () -> Unit, onNavigateBack: () -
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────
-// Profile content
-// ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun ProfileContent(
@@ -358,51 +344,6 @@ private fun ProfileContent(
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────
-// Top bar
-// ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun ProfileTopBar(title: String, onNavigateBack: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.background,
-        shadowElevation = if (title == "Loading...") 0.dp else 4.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onNavigateBack) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    "Back",
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            IconButton(onClick = {}) {
-                Icon(
-                    Icons.Default.MoreVert,
-                    "More options",
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Profile header
-// ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
@@ -470,9 +411,6 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
 
         Spacer(Modifier.height(16.dp))
 
-        // FIX 2: added Arrangement.Center + verticalAlignment so name and badge
-        // are centered together, and removed the broken fillMaxWidth + align combo.
-        // Also added a Spacer between the text and the badge so they don't crowd.
         Row(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
@@ -541,10 +479,6 @@ private fun ProfileHeader(user: User, isOwner: Boolean, isOnline: Boolean) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Stats row
-// ─────────────────────────────────────────────────────────────
-
 @Composable
 private fun StatsRow(postsCount: Long, followersCount: Long, followingCount: Long) {
     Column {
@@ -587,10 +521,6 @@ private fun StatItem(count: String, label: String) {
         Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-
-// ─────────────────────────────────────────────────────────────
-// Action buttons
-// ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun ActionButtons(
@@ -660,10 +590,6 @@ private fun ActionButtons(
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
 
 private fun formatCount(count: Long): String = when {
     count >= 1_000_000 -> "%.1fM".format(count / 1_000_000.0)
