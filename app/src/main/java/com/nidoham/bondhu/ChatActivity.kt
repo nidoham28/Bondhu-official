@@ -28,6 +28,8 @@ class ChatActivity : ComponentActivity() {
         val targetId = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
             ?.takeIf { it.isNotBlank() }
 
+        val targetAI = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_AI)
+
         // 2. Validate Critical Data
         if (conversationId == null) {
             Timber.e("ChatActivity: Missing EXTRA_CONVERSATION_ID. Finishing.")
@@ -45,7 +47,7 @@ class ChatActivity : ComponentActivity() {
         // 4. Initialize ViewModel
         // We pass the targetId (if exists) directly to initChat to ensure
         // the state is ready before streams begin.
-        viewModel.initChat(conversationId = conversationId, targetId = targetId)
+        viewModel.initChat(conversationId = conversationId, targetId = targetId, targetAI = targetAI as Boolean?)
 
         // 5. Set Content
         setContent {

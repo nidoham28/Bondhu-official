@@ -61,6 +61,7 @@ class ChatViewModel @Inject constructor(
     private var currentConversationId: String? = null
     private var currentPeerId: String? = null
     private var targetId: String = ""
+    private var targetAI:  Boolean = false
 
     // Coroutine jobs
     private var chatObservationJob: Job? = null
@@ -74,7 +75,7 @@ class ChatViewModel @Inject constructor(
      * @param conversationId The ID of the conversation.
      * @param targetId Optional. If present, configures the session for AI interaction immediately.
      */
-    fun initChat(conversationId: String, targetId: String? = null) {
+    fun initChat(conversationId: String, targetId: String? = null, targetAI: Boolean? = false) {
         if (currentConversationId == conversationId) {
             Timber.tag(TAG).d("initChat: Already initialized for $conversationId")
             return
@@ -85,6 +86,7 @@ class ChatViewModel @Inject constructor(
         Timber.tag(TAG).i("Conversation ID: $conversationId")
         Timber.tag(TAG).i("Current User ID: $currentUserId")
         Timber.tag(TAG).i("Target ID: $targetId")
+        Timber.tag(TAG).i("Target AI: $targetAI")
         Timber.tag(TAG).i("────────────────────────────────────────")
 
         cancelPeerJobs()
@@ -95,6 +97,7 @@ class ChatViewModel @Inject constructor(
 
         // Set AI ID immediately if provided
         targetId?.let { this.targetId = it }
+        targetAI?.let { this.targetAI = it }
 
         chatObservationJob?.cancel()
         chatObservationJob = viewModelScope.launch {
@@ -283,7 +286,7 @@ class ChatViewModel @Inject constructor(
                         .onFailure { e -> Timber.tag(TAG).e(e, "Failed to increment message count") }
 
                     // Trigger AI Logic
-                    if (true) {
+                    if (targetAI) {
                         Timber.tag(TAG).i("AI Mode Active: Requesting reply from AI ($targetId)")
                         launch {
                             aiMessageManager.push(

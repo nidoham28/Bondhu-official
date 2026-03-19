@@ -20,6 +20,7 @@ object NavigationHelper {
     const val EXTRA_USER_ID = "extra_user_id"
     const val EXTRA_CONVERSATION_ID = "extra_conversation_id"
     const val EXTRA_TARGET_ID = "extra_target_id"
+    const val EXTRA_TARGET_AI = "extra_target_ai"
     const val EXTRA_STREAM_URL = "extra_stream_url"
     const val EXTRA_TITLE = "extra_title"
 
@@ -74,10 +75,11 @@ object NavigationHelper {
     /**
      * Opens [ChatActivity] for the given [conversationId] and optional [targetUid].
      */
-    fun navigateToChat(context: Context, conversationId: String, targetUid: String? = null) {
+    fun navigateToChat(context: Context, conversationId: String, targetUid: String? = null, ai: Boolean = false) {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         val intent = Intent(context, ChatActivity::class.java).apply {
             putExtra(EXTRA_CONVERSATION_ID, conversationId)
+            putExtra(EXTRA_TARGET_AI, ai)
             targetUid?.let { putExtra(EXTRA_TARGET_ID, it) }
         }
         launch(context = context, intent = intent, transition = slideTransition(context))

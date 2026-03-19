@@ -2,6 +2,7 @@ package com.nidoham.server.domain.participant
 
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.ServerTimestamp
 import com.nidoham.server.util.AuthProvider
 
@@ -40,6 +41,7 @@ import com.nidoham.server.util.AuthProvider
  * @property showLastSeen    Whether last-seen timestamps are visible to others.
  * @property showPhotoUrl    Whether the profile photo is visible to others.
  */
+@IgnoreExtraProperties
 data class User(
 
     // ─── Identity ─────────────────────────────────────────────────────────────
@@ -57,6 +59,8 @@ data class User(
     var coverUrl: String? = null,
     var bio: String? = null,
     var status: String? = null,
+
+    var ai: Boolean = false,
 
     // ─── Account State ────────────────────────────────────────────────────────
     var verified: Boolean = false,
