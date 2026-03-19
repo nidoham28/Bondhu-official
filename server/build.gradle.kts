@@ -49,22 +49,23 @@ dependencies {
 
     // Lifecycle — runtime and process only; Compose lifecycle deps belong in the app module
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.lifecycle.process)
+    implementation(libs.androidx.lifecycle.process)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
 
-    // Logging
-    implementation(libs.timber)
+    // Networking
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging.interceptor)
 
-    implementation(libs.bondhuai)
-
+    // AI SDKs
+    implementation(libs.bondhu.ai)
     implementation(libs.zai.sdk)
     implementation(libs.openai.java)
 
-    implementation(libs.okhttp.v4120)
-    implementation(libs.logging.interceptor.v4120)
+    // Logging
+    implementation(libs.timber)
 
     // Testing
     testImplementation(libs.junit)

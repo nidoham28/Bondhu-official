@@ -51,12 +51,14 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.exifinterface)
 
     // Lifecycle
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.lifecycle.process)
+    implementation(libs.androidx.lifecycle.process)
 
     // Compose
     implementation(libs.androidx.activity.compose)
@@ -65,11 +67,24 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.compose.material.icons)
     implementation(libs.androidx.compose.runtime.livedata)
 
     // Navigation
     implementation(libs.androidx.navigation.compose)
+
+    // Media3
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.media3.session)
+
+    // Paging 3
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
+
+    // DataStore
+    implementation(libs.datastore.preferences)
 
     // Firebase
     implementation(platform(libs.firebase.bom))
@@ -88,16 +103,8 @@ dependencies {
 
     // Hilt
     implementation(libs.hilt.android)
-    implementation(libs.androidx.media3.session)
-    ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
-
-    // Paging 3
-    implementation(libs.androidx.paging.runtime)
-    implementation(libs.androidx.paging.compose)
-
-    // DataStore
-    implementation(libs.datastore.preferences)
+    ksp(libs.hilt.compiler)
 
     // Networking
     implementation(libs.okhttp)
@@ -106,7 +113,7 @@ dependencies {
     implementation(libs.retrofit.converter.gson)
     implementation(libs.gson)
 
-    // Image loading
+    // Image Loading
     implementation(libs.coil.compose)
 
     // Logging
@@ -116,9 +123,22 @@ dependencies {
     implementation(libs.accompanist.pager)
     implementation(libs.accompanist.pager.indicators)
 
-    // Utilities
-    implementation(libs.androidx.activity)
-    implementation(libs.androidx.exifinterface)
+    // Extractors
+    implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
+        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
+    }
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
+        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
+    }
+
+    // AI SDKs
+    implementation(libs.bondhu.ai)
+    implementation(libs.zai.sdk)
+    implementation(libs.openai.java)
+
+    // Local modules
+    implementation(project(":server"))
+    implementation(project(":opentube"))
 
     // Testing
     testImplementation(libs.junit)
@@ -128,29 +148,4 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-
-    implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
-        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
-    }
-
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
-        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
-    }
-
-    implementation(libs.bondhuai)
-
-    implementation(libs.zai.sdk)
-    implementation(libs.openai.java)
-
-    implementation(libs.okhttp.v4120)
-    implementation(libs.logging.interceptor.v4120)
-
-    // Media3
-    implementation(libs.androidx.media3.exoplayer)
-    implementation(libs.androidx.media3.ui)
-    implementation(libs.androidx.media3.common)
-
-    // Local modules
-    implementation(project(":server"))
-    implementation(project(":opentube"))
 }

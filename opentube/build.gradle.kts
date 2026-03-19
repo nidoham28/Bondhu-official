@@ -34,10 +34,10 @@ android {
 }
 
 dependencies {
+    // Extractors
     implementation("com.github.nidoham:Extractor:ddf2d54d3d") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
-
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
