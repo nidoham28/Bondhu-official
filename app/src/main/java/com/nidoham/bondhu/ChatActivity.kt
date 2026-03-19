@@ -10,19 +10,14 @@ import com.nidoham.bondhu.presentation.navigation.NavigationHelper
 import com.nidoham.bondhu.presentation.screen.chat.ChatScreen
 import com.nidoham.bondhu.presentation.viewmodel.ChatViewModel
 import com.nidoham.bondhu.ui.theme.AppTheme
-import com.nidoham.server.api.API
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
- * Hosts the chat UI for a single conversation.
+ * Host activity for the one-to-one chat screen.
  *
  * Expects [NavigationHelper.EXTRA_CONVERSATION_ID] in the launching intent.
- * When [NavigationHelper.EXTRA_TARGET_ID] is also present the conversation is
- * treated as an AI chat and [ChatViewModel.configureAi] is called before the
- * first render.
- *
- * All business logic lives in [ChatViewModel]; this activity only wires the
- * ViewModel to [ChatScreen] and handles back-navigation.
+ * If [NavigationHelper.EXTRA_TARGET_ID] is present, the conversation is treated
+ * as an AI chat, and the ViewModel is configured accordingly.
  */
 @AndroidEntryPoint
 class ChatActivity : ComponentActivity() {
@@ -32,37 +27,37 @@ class ChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Extract and validate required Conversation ID
         val conversationId = intent.getStringExtra(NavigationHelper.EXTRA_CONVERSATION_ID)
-            ?.takeIf { it.isNotBlank() }
-        val targetUid      = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
             ?.takeIf { it.isNotBlank() }
 
         if (conversationId == null) {
+            // Invalid state, cannot proceed without a conversation ID
             finish()
             return
         }
 
+        // Extract optional AI User ID (Target ID)
+        val aiUserId = intent.getStringExtra(NavigationHelper.EXTRA_TARGET_ID)
+            ?.takeIf { it.isNotBlank() }
+
+        // Initialize the chat session
         viewModel.initChat(conversationId)
 
-        // Arm AI mode when a target UID is present.
-        if (targetUid != null) {
-            viewModel.configureAi(
-                targetId = targetUid,
-                apiKey   = API.apiKey,
-            )
-        }
+        // Configure AI mode if an AI User ID is provided
+        aiUserId?.let { viewModel.configureAi(it) }
 
         setContent {
             AppTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                 ChatScreen(
-                    uiState        = uiState,
-                    onBack         = { finish() },
+                    uiState = uiState,
+                    onBack = { finish() },
                     onInputChanged = viewModel::onInputChanged,
-                    onSend         = viewModel::sendMessage,
-                    isMine         = viewModel::isMine,
-                    isReadByPeer   = viewModel::isReadByPeer,
+                    onSend = viewModel::sendMessage,
+                    isMine = viewModel::isMine,
+                    isReadByPeer = viewModel::isReadByPeer,
                 )
             }
         }

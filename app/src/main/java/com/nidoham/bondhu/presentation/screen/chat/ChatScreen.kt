@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,27 +39,15 @@ import kotlinx.coroutines.launch
 /**
  * Root composable for the one-to-one chat conversation screen.
  *
- * Responsibilities:
- *  - Renders the full-screen wallpaper ([ChatBackground]) as the bottom-most
- *    z-order layer; the [Scaffold] above it uses a transparent container color
- *    so the image shows through.
- *  - Hosts the [ChatTopBar], [MessageList], [ChatInputBar], and [EmojiBottomSheet].
- *  - Automatically scrolls to the newest message whenever the message count
- *    changes or the initial load completes. The list is ordered oldest-first
- *    (reversed by the ViewModel), so the newest item sits at [lastIndex].
- *  - Manages the emoji bottom-sheet lifecycle and a session-scoped
- *    recent-emoji list.
+ * Handles the layout structure, system insets, and coordination between
+ * the message list, input bar, and background.
  *
- * This composable is intentionally free of business logic; all state lives in
- * the caller-supplied [uiState] and the provided callbacks.
- *
- * @param uiState        Snapshot of the current chat UI state.
- * @param onBack         Invoked when the user taps the back arrow.
- * @param onInputChanged Invoked on every keystroke in the text field.
- * @param onSend         Invoked when the user sends a message.
- * @param isMine         Returns true if the supplied [Message] was sent by
- *                       the local user.
- * @param isReadByPeer   Returns true if the peer has read the supplied [Message].
+ * @param uiState The current state of the chat UI.
+ * @param onBack Callback for the back navigation button.
+ * @param onInputChanged Callback when the input text field changes.
+ * @param onSend Callback when the send button is clicked.
+ * @param isMine Predicate to determine if a message belongs to the current user.
+ * @param isReadByPeer Predicate to determine if a message has been read by the peer.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,21 +59,16 @@ fun ChatScreen(
     isMine: (Message) -> Boolean,
     isReadByPeer: (Message) -> Boolean,
 ) {
-    val listState  = rememberLazyListState()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-    val scope      = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
 
-    // Session-scoped recent-emoji list. Owned here rather than as a shared
-    // global so each screen instance maintains independent recency state.
+    // Session-scoped list of recently used emojis for the current screen instance.
     val recentEmojis = remember { mutableStateListOf<String>() }
+    var isEmojiSheetVisible by remember { mutableStateOf(false) }
 
-    // rememberSavable is not needed here — sheet visibility does not need to
-    // survive process death, and the overhead of serialization is unnecessary.
-    var showEmojiSheet by remember { mutableStateOf(false) }
-
-    // Scroll to the newest message (lastIndex) whenever the message list grows
-    // or the initial load completes. The ViewModel emits the list oldest-first,
-    // so index 0 is the oldest and lastIndex is always the newest item.
+    // Automatically scroll to the newest message whenever the list updates.
+    // The ViewModel emits messages oldest-first, so the newest item is at the last index.
     LaunchedEffect(uiState.messages.size, uiState.isLoading) {
         if (!uiState.isLoading && uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.lastIndex)
@@ -92,99 +76,122 @@ fun ChatScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val windowClass = maxWidth.toWindowWidthClass()
+        val widthSizeClass = maxWidth.toWindowWidthClass()
 
-        // Full-screen wallpaper — sits behind the Scaffold in the z-order.
+        // Layer 1: Full-screen wallpaper background.
         ChatBackground()
 
+        // Layer 2: Main content scaffold with a transparent container to show the background.
         Scaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            containerColor      = Color.Transparent,
+            contentWindowInsets = WindowInsets.systemBars,
+            containerColor = Color.Transparent,
             topBar = {
                 ChatTopBar(
-                    peerName        = uiState.peerName,
-                    peerAvatarUrl   = uiState.peerAvatarUrl,
-                    isOnline        = uiState.isPeerOnline,
+                    peerName = uiState.peerName,
+                    peerAvatarUrl = uiState.peerAvatarUrl,
+                    isOnline = uiState.isPeerOnline,
                     statusText = uiState.lastSeen,
-                    onNavigateBack  = onBack,
-                    windowSizeClass = windowClass,
+                    onNavigateBack = onBack,
+                    windowSizeClass = widthSizeClass,
                 )
-            },
+            }
         ) { innerPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    // Apply both top and bottom scaffold insets. Bottom is
-                    // required for navigation bar clearance when present;
-                    // the keyboard is handled separately by imePadding().
-                    .padding(
-                        top    = innerPadding.calculateTopPadding(),
-                        bottom = innerPadding.calculateBottomPadding()
-                    ),
+                    .padding(innerPadding) // Apply insets from Scaffold (Status bar + TopBar)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .imePadding(),
+                        .imePadding() // Apply keyboard insets
                 ) {
+                    // Message List Container
                     Box(modifier = Modifier.weight(1f)) {
                         when {
-                            uiState.isLoading -> CircularProgressIndicator(
-                                modifier    = Modifier.align(Alignment.Center),
-                                color       = MaterialTheme.colorScheme.primary,
-                                strokeWidth = 3.dp,
-                            )
-
-                            uiState.messages.isEmpty() -> {
-                                // Empty state placeholder — add a prompt composable
-                                // here when an empty-state design is available.
+                            uiState.isLoading -> {
+                                LoadingIndicator()
                             }
-
-                            else -> MessageList(
-                                messages      = uiState.messages,
-                                listState     = listState,
-                                isMine        = isMine,
-                                isReadByPeer  = isReadByPeer,
-                                windowClass   = windowClass,
-                                peerAvatarUrl = uiState.peerAvatarUrl,
-                                peerName      = uiState.peerName,
-                                isPeerTyping  = uiState.isPeerTyping,
-                            )
+                            uiState.messages.isEmpty() -> {
+                                // Placeholder for empty conversation state.
+                            }
+                            else -> {
+                                MessageList(
+                                    messages = uiState.messages,
+                                    listState = listState,
+                                    isMine = isMine,
+                                    isReadByPeer = isReadByPeer,
+                                    windowClass = widthSizeClass,
+                                    peerAvatarUrl = uiState.peerAvatarUrl,
+                                    peerName = uiState.peerName,
+                                    isPeerTyping = uiState.isPeerTyping
+                                )
+                            }
                         }
                     }
 
+                    // Input Bar
                     ChatInputBar(
-                        messageText         = uiState.inputText,
+                        messageText = uiState.inputText,
                         onMessageTextChange = onInputChanged,
-                        onSend              = onSend,
-                        isSendError         = uiState.isSendError,
-                        windowSizeClass     = windowClass,
-                        onEmojiClick        = {
-                            showEmojiSheet = true
+                        onSend = onSend,
+                        isSendError = uiState.isSendError,
+                        windowSizeClass = widthSizeClass,
+                        onEmojiClick = {
+                            isEmojiSheetVisible = true
                             scope.launch { sheetState.show() }
-                        },
+                        }
                     )
                 }
             }
         }
     }
 
-    if (showEmojiSheet) {
+    // Emoji Picker Bottom Sheet
+    if (isEmojiSheetVisible) {
         EmojiBottomSheet(
-            sheetState   = sheetState,
+            sheetState = sheetState,
             recentEmojis = recentEmojis,
-            onDismiss    = {
+            onDismiss = {
                 scope.launch { sheetState.hide() }
-                    .invokeOnCompletion { showEmojiSheet = false }
+                    .invokeOnCompletion {
+                        if (!sheetState.isVisible) {
+                            isEmojiSheetVisible = false
+                        }
+                    }
             },
             onEmojiSelected = { emoji ->
-                // Maintain a capped, deduplicated recent-emoji list scoped to
-                // this screen instance. Capacity is capped at 24 entries.
-                recentEmojis.remove(emoji)
-                recentEmojis.add(0, emoji)
-                if (recentEmojis.size > 24) recentEmojis.removeLastOrNull()
+                updateRecentEmojis(recentEmojis, emoji)
                 onInputChanged(uiState.inputText + emoji)
-            },
+            }
         )
+    }
+}
+
+/**
+ * Helper composable for the centered loading indicator.
+ */
+@Composable
+private fun LoadingIndicator() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            color = MaterialTheme.colorScheme.primary,
+            strokeWidth = 3.dp
+        )
+    }
+}
+
+/**
+ * Updates the list of recently used emojis.
+ * Moves the selected emoji to the front and caps the list size at 24.
+ */
+private fun updateRecentEmojis(recentEmojis: MutableList<String>, emoji: String) {
+    recentEmojis.remove(emoji)
+    recentEmojis.add(0, emoji)
+    if (recentEmojis.size > 24) {
+        recentEmojis.removeLastOrNull()
     }
 }

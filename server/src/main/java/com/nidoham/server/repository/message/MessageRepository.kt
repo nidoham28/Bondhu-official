@@ -852,8 +852,8 @@ class MessageRepository(
      *
      * @param conversationId The conversation to clear the indicator for.
      */
-    suspend fun clearTyping(conversationId: String): Result<Unit> =
-        typingManager.clearTyping(conversationId)
+    suspend fun clearTyping(conversationId: String, targetId: String): Result<Unit> =
+        typingManager.clearTyping(conversationId, targetId)
 
     /**
      * Clears the typing indicator for a specific user regardless of who is

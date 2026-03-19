@@ -12,48 +12,36 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TypingState
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Represents the current typing state for a given conversation.
+ * Represents the real-time typing state for a conversation.
  *
- * @property conversationId The conversation this state belongs to.
- * @property typingUserIds  UIDs of participants currently typing, excluding the
- *                          current user. An empty list means no one is typing.
+ * @property conversationId The ID of the conversation.
+ * @property typingUserIds A list of user IDs currently typing, excluding the current user.
  */
 data class TypingState(
     val conversationId: String,
     val typingUserIds: List<String>
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TypingManager
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
  * Manages real-time typing indicators using Firebase Realtime Database.
  *
- * RTDB schema:
- *   typing/{conversationId}/{userId}  →  Long (server timestamp)
+ * **Database Schema:**
+ * ```
+ * typing/{conversationId}/{userId} : Long (Server Timestamp)
+ * ```
  *
- * Each child under a conversation node represents one participant. Setting a
- * user's field to [ServerValue.TIMESTAMP] marks them as typing; removing the
- * field marks them as stopped. Every write registers an [onDisconnect] removal
- * on the server, so indicators are cleaned up automatically if a client
- * disconnects without sending an explicit stop-typing signal. This replaces the
- * client-side stale-timestamp filtering required in a Firestore implementation.
+ * **Mechanism:**
+ * - **Start Typing:** Writes a server timestamp to the user's node.
+ * - **Stop Typing:** Removes the user's node.
+ * - **Cleanup:** Uses `onDisconnect` to automatically remove the indicator if the client disconnects unexpectedly.
  *
- * A secondary [TYPING_TIMEOUT_MS] guard is retained as a belt-and-suspenders
- * measure for edge cases where the server's [onDisconnect] execution is delayed.
- *
- * All write operations return [Result] so the caller decides how to handle
- * failures. The observer flow emits a safe empty [TypingState] on transient
- * errors rather than crashing the UI.
+ * **Staleness Guard:**
+ * A client-side timeout ([TYPING_TIMEOUT_MS]) filters out entries that exceed the threshold,
+ * handling edge cases where `onDisconnect` execution might be delayed.
  *
  * @param database Injectable [FirebaseDatabase] instance.
- * @param auth     Injectable [FirebaseAuth] instance.
+ * @param auth Injectable [FirebaseAuth] instance.
  */
 class TypingManager(
     private val database: FirebaseDatabase = FirebaseDatabase.getInstance(),
@@ -64,15 +52,14 @@ class TypingManager(
         private const val TYPING_ROOT = "typing"
 
         /**
-         * Duration in milliseconds after which a typing entry is treated as stale.
-         * Align this with the debounce interval used by the UI to send heartbeats.
-         * Default: 10 seconds.
+         * Threshold in milliseconds to treat a typing entry as stale.
+         * Defaults to 10 seconds.
          */
         const val TYPING_TIMEOUT_MS = 10_000L
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // References
+    // Reference Helpers
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun conversationRef(conversationId: String): DatabaseReference =
@@ -86,171 +73,128 @@ class TypingManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Records that the currently authenticated user has started or stopped typing.
+     * Updates the typing status for a specific user in a conversation.
      *
-     * When [typing] is true, the user's field is set to [ServerValue.TIMESTAMP]
-     * and an [onDisconnect] removal is registered on the server so the indicator
-     * is cleared automatically if the client disconnects unexpectedly. When
-     * [typing] is false, the field is removed and the [onDisconnect] handler is
-     * cancelled, since no cleanup will be needed.
-     *
-     * @param conversationId The conversation in which the typing event occurred.
-     * @param typing         True if the user is currently typing; false otherwise.
+     * @param conversationId The target conversation.
+     * @param userId The user whose status is changing.
+     * @param isTyping True if typing, false if stopped.
+     * @return [Result] indicating success or failure.
      */
     suspend fun setTyping(
         conversationId: String,
-        uid: String = auth.currentUser?.uid ?: error("No authenticated user"),
-        typing: Boolean
+        userId: String,
+        isTyping: Boolean
     ): Result<Unit> = runCatching {
-        val ref = userRef(conversationId, uid)
+        val ref = userRef(conversationId, userId)
 
-        if (typing) {
+        if (isTyping) {
+            // Ensure the indicator is removed on disconnect
             ref.onDisconnect().removeValue().await()
+            // Set current timestamp
             ref.setValue(ServerValue.TIMESTAMP).await()
         } else {
+            // Cancel the disconnect handler since we are explicitly stopping
             ref.onDisconnect().cancel().await()
             ref.removeValue().await()
         }
     }
 
     /**
-     * Marks the currently authenticated user as no longer typing. Convenience
-     * wrapper around [setTyping] with [typing] set to false. Should be called
-     * from lifecycle callbacks — e.g. when the user navigates away, the app
-     * backgrounds, or the conversation screen is destroyed.
-     *
-     * @param conversationId The conversation to clear the indicator for.
+     * Clears the typing indicator for the given user. Convenience wrapper for [setTyping].
      */
-    suspend fun clearTyping(conversationId: String): Result<Unit> =
-        setTyping(conversationId = conversationId, typing = false)
+    suspend fun clearTyping(conversationId: String, userId: String): Result<Unit> =
+        setTyping(conversationId, userId, isTyping = false)
 
     /**
-     * Removes the typing indicator for a specific [userId] regardless of which
-     * user is currently authenticated. Intended for administrative use cases
-     * such as clearing a user's indicator after they are removed from a
-     * conversation.
-     *
-     * @param conversationId The conversation to clear the indicator for.
-     * @param userId         The UID of the user whose indicator should be removed.
+     * Clears the typing indicator for a specific user. Useful for admin operations.
      */
-    suspend fun clearTypingForUser(
-        conversationId: String,
-        userId: String
-    ): Result<Unit> = runCatching {
+    suspend fun clearTypingForUser(conversationId: String, userId: String): Result<Unit> = runCatching {
         userRef(conversationId, userId).removeValue().await()
     }
 
     /**
-     * Removes the entire typing node for a conversation, clearing all active
-     * indicators simultaneously. Appropriate when a conversation is archived,
-     * closed, or when all participants have left.
-     *
-     * @param conversationId The conversation whose typing node should be deleted.
+     * Removes the entire typing node for a conversation.
+     * Use when a conversation is deleted or archived.
      */
     suspend fun clearAllTyping(conversationId: String): Result<Unit> = runCatching {
         conversationRef(conversationId).removeValue().await()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Real-Time Listener
+    // Read Operations
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a [Flow] that emits an updated [TypingState] whenever the set of
-     * actively typing users in the given conversation changes.
+     * Observes typing activity in a conversation.
      *
-     * The current user is excluded from the emitted list. A secondary
-     * [TYPING_TIMEOUT_MS] check filters any entries whose timestamp exceeds the
-     * threshold, guarding against edge cases where [onDisconnect] execution is
-     * delayed by the server.
-     *
-     * On a [DatabaseError], a safe empty [TypingState] is emitted and the
-     * optional [onError] callback is invoked so the caller can forward the
-     * error to a reporting system without disrupting the UI. The underlying
-     * listener is removed automatically when the flow's collector is cancelled.
-     *
-     * Recommended ViewModel usage:
-     * ```kotlin
-     * val typingState = typingManager
-     *     .observeTyping(conversationId)
-     *     .stateIn(
-     *         scope        = viewModelScope,
-     *         started      = SharingStarted.WhileSubscribed(5_000),
-     *         initialValue = TypingState(conversationId, emptyList())
-     *     )
-     * ```
+     * Automatically excludes the current authenticated user and filters out stale entries
+     * older than [TYPING_TIMEOUT_MS].
      *
      * @param conversationId The conversation to observe.
-     * @param onError        Optional callback invoked with non-fatal RTDB errors.
-     *                       Defaults to a no-op.
+     * @param onError Callback for database errors (does not stop the flow).
+     * @return A [Flow] emitting [TypingState] updates.
      */
     fun observeTyping(
         conversationId: String,
         onError: (DatabaseError) -> Unit = {}
     ): Flow<TypingState> = callbackFlow {
-        val currentUid = auth.currentUser?.uid
-        val empty      = TypingState(conversationId, emptyList())
+        val currentUserId = auth.currentUser?.uid
+        val emptyState = TypingState(conversationId, emptyList())
 
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (!snapshot.exists()) {
-                    trySend(empty)
+                    trySend(emptyState)
                     return
                 }
 
                 val now = System.currentTimeMillis()
-                val typingUserIds = snapshot.children
-                    .filter { child ->
-                        if (child.key == currentUid) return@filter false
-                        val timestampMs = child.getValue(Long::class.java) ?: return@filter false
-                        (now - timestampMs) < TYPING_TIMEOUT_MS
-                    }
-                    .mapNotNull { it.key }
+                val activeUserIds = snapshot.children
+                    .mapNotNull { child ->
+                        // Filter logic:
+                        // 1. Exclude current user.
+                        // 2. Validate timestamp exists.
+                        // 3. Check staleness.
+                        if (child.key == currentUserId) return@mapNotNull null
 
-                trySend(TypingState(conversationId, typingUserIds))
+                        val timestamp = child.getValue(Long::class.java) ?: return@mapNotNull null
+
+                        if (now - timestamp < TYPING_TIMEOUT_MS) child.key else null
+                    }
+
+                trySend(TypingState(conversationId, activeUserIds))
             }
 
             override fun onCancelled(error: DatabaseError) {
                 onError(error)
-                trySend(empty)
+                // Emit empty state to reset UI gracefully
+                trySend(emptyState)
             }
         }
 
         val ref = conversationRef(conversationId)
         ref.addValueEventListener(listener)
+
         awaitClose { ref.removeEventListener(listener) }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // One-Shot Read
-    // ─────────────────────────────────────────────────────────────────────────
-
     /**
-     * Returns a one-shot snapshot of the current [TypingState] for the given
-     * conversation without attaching a persistent listener. Appropriate for
-     * scenarios where a single read is sufficient, such as populating a
-     * notification payload.
-     *
-     * The same stale-entry filtering applied by [observeTyping] is used here
-     * to ensure consistent behaviour between the live and one-shot APIs.
-     *
-     * @param conversationId The conversation to query.
+     * Fetches a one-time snapshot of the typing state.
      */
     suspend fun fetchTypingState(conversationId: String): Result<TypingState> = runCatching {
-        val currentUid = auth.currentUser?.uid
-        val snapshot   = conversationRef(conversationId).get().await()
+        val currentUserId = auth.currentUser?.uid
+        val snapshot = conversationRef(conversationId).get().await()
 
         if (!snapshot.exists()) return@runCatching TypingState(conversationId, emptyList())
 
         val now = System.currentTimeMillis()
-        val typingUserIds = snapshot.children
-            .filter { child ->
-                if (child.key == currentUid) return@filter false
-                val timestampMs = child.getValue(Long::class.java) ?: return@filter false
-                (now - timestampMs) < TYPING_TIMEOUT_MS
+        val activeUserIds = snapshot.children
+            .mapNotNull { child ->
+                if (child.key == currentUserId) return@mapNotNull null
+                val timestamp = child.getValue(Long::class.java) ?: return@mapNotNull null
+                if (now - timestamp < TYPING_TIMEOUT_MS) child.key else null
             }
-            .mapNotNull { it.key }
 
-        TypingState(conversationId, typingUserIds)
+        TypingState(conversationId, activeUserIds)
     }
 }

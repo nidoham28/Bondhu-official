@@ -31,6 +31,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    configurations.all {
+        resolutionStrategy {
+            force("com.squareup.okhttp3:okhttp:4.12.0")
+        }
+    }
 }
 
 dependencies {

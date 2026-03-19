@@ -1,6 +1,7 @@
 package com.nidoham.server.manager
 
-import com.nidoham.ai.api.zai.GenerativeAI
+import com.nidoham.ai.api.zai.ZaiChatSession
+import com.nidoham.ai.api.zai.extractContent
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.repository.message.MessageRepository
@@ -11,26 +12,27 @@ import timber.log.Timber
 import javax.inject.Inject
 
 class AiMessageManager @Inject constructor(
-    private val ai: GenerativeAI,
+    private val chatSession: ZaiChatSession,
     private val messageRepository: MessageRepository
 ) {
 
     /**
-     * Sends a user message to AI and writes AI response to conversation
+     * Sends a user message to AI and writes AI response to conversation.
+     * Note: This currently resets the session history for every request.
+     * TODO: Consider loading existing conversation history from DB for context retention.
      */
     suspend fun push(
         userMessage: String,
         targetId: String,
         conversationId: String
     ) {
+        // Reset history for this request (Stateless behavior)
+        chatSession.clearHistory()
 
-        ai.setHistory(emptyList())
+        when (val result = chatSession.chat(userMessage)) {
 
-        when (val result = ai.sendMessage(userMessage)) {
-
-            is GenerativeAI.Result.Success -> {
-
-                val content = GenerativeAI.toContent(result.message)
+            is ZaiChatSession.ChatResult.Success -> {
+                val content = result.message.extractContent()
 
                 sendMessage(
                     content = content,
@@ -39,15 +41,13 @@ class AiMessageManager @Inject constructor(
                 )
             }
 
-            is GenerativeAI.Result.ApiError -> {
-
+            is ZaiChatSession.ChatResult.ApiError -> {
                 Timber.e(
                     "AiMessageManager API error ${result.code} for conversation $conversationId : ${result.message}"
                 )
             }
 
-            is GenerativeAI.Result.ExceptionError -> {
-
+            is ZaiChatSession.ChatResult.ExceptionError -> {
                 Timber.e(
                     result.exception,
                     "AiMessageManager exception for conversation $conversationId"
@@ -61,11 +61,9 @@ class AiMessageManager @Inject constructor(
         targetId: String,
         conversationId: String
     ) {
-
         if (content.isBlank()) return
 
         withContext(Dispatchers.IO) {
-
             val message = Message(
                 parentId = conversationId,
                 senderId = targetId,
@@ -75,7 +73,6 @@ class AiMessageManager @Inject constructor(
 
             messageRepository.sendMessage(conversationId, message)
                 .onSuccess { messageId ->
-
                     val preview = MessagePreview(
                         messageId = messageId,
                         parentId = conversationId,
@@ -94,7 +91,6 @@ class AiMessageManager @Inject constructor(
                             Timber.w(e, "Failed incrementing message count for $conversationId")
                         }
                 }
-
                 .onFailure { e ->
                     Timber.e(e, "Failed sending message to conversation $conversationId")
                 }

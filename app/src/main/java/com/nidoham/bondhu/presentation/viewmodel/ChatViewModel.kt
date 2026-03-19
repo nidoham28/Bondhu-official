@@ -8,7 +8,6 @@ import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.manager.AiMessageManager
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
-import com.nidoham.server.util.AiProvider
 import com.nidoham.server.util.MessageStatus
 import com.nidoham.server.util.MessageType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -50,12 +49,12 @@ class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
     private val firebaseAuth: FirebaseAuth,
-    private val manager: AiMessageManager,
+    private val aiMessageManager: AiMessageManager
 ) : ViewModel() {
 
     // ── Thresholds ────────────────────────────────────────────────────────────
 
-    private val onlineStalenessMs: Long    = TimeUnit.MINUTES.toMillis(15)
+    private val onlineStalenessMs: Long = TimeUnit.MINUTES.toMillis(15)
     private val selfTypingIdleStopMs: Long = 5_000L
 
     // ── UI state ──────────────────────────────────────────────────────────────
@@ -71,11 +70,8 @@ class ChatViewModel @Inject constructor(
     private var currentConversationId: String? = null
     private var currentPeerId: String? = null
 
-    // ── AI session config — set once via configureAi() ───────────────────────
-
-    private var aiTargetId: String = ""
-    private var aiProvider: AiProvider = AiProvider.ZAI
-    private var aiApiKey: String = ""
+    // The User ID of the AI participant (if this is an AI conversation)
+    private var aiUserId: String = ""
 
     // ── Coroutine jobs ────────────────────────────────────────────────────────
 
@@ -96,22 +92,20 @@ class ChatViewModel @Inject constructor(
         stopSelfTypingInternal()
 
         currentConversationId = conversationId
-        currentPeerId         = null
+        currentPeerId = null
 
         chatObservationJob?.cancel()
         chatObservationJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            // Stream 1: resolve peer UID from the participants sub-collection.
+            // Stream 1: Resolve peer UID from the participants sub-collection.
             launch {
                 messageRepository.observeParticipants(conversationId)
                     .catch { e ->
                         Timber.w(e, "ChatViewModel: participant stream error for $conversationId")
                     }
                     .collect { participants ->
-                        val peerId = participants
-                            .firstOrNull { it.uid != currentUserId }
-                            ?.uid
+                        val peerId = participants.firstOrNull { it.uid != currentUserId }?.uid
 
                         if (peerId == null) {
                             Timber.w("ChatViewModel: could not resolve peer UID for $conversationId")
@@ -122,19 +116,19 @@ class ChatViewModel @Inject constructor(
                         currentPeerId = peerId
 
                         cancelPeerJobs()
-                        peerProfileJob  = launch { loadPeerProfile(peerId) }
+                        peerProfileJob = launch { loadPeerProfile(peerId) }
                         peerPresenceJob = launch { observePeerPresence(peerId) }
-                        peerTypingJob   = launch { observePeerTyping(conversationId, peerId) }
+                        peerTypingJob = launch { observePeerTyping(conversationId, peerId) }
                     }
             }
 
-            // Stream 2: live conversation metadata — reserved for future use.
+            // Stream 2: Live conversation metadata (reserved for future use).
             launch {
                 messageRepository.observeConversation(conversationId)
                     .collect { /* metadata-driven UI updates go here */ }
             }
 
-            // Stream 3: live message list.
+            // Stream 3: Live message list.
             launch {
                 messageRepository.observeMessages(conversationId)
                     .catch { e ->
@@ -151,25 +145,13 @@ class ChatViewModel @Inject constructor(
 
     /**
      * Configures this conversation for AI replies.
+     * Call this after [initChat] if the peer is an AI bot.
      *
-     * Call once after [initChat] when the conversation is known to be an AI
-     * chat. After calling this, every [sendMessage] invocation will fire-and-
-     * forget an AI reply pipeline via [AiMessageManager.push]. All outcomes
-     * stream back through [observeMessages] exactly like any other message.
-     *
-     * @param targetId The AI participant's UID in Firebase.
-     * @param provider Which AI backend to use. Defaults to [AiProvider.ZAI].
-     * @param apiKey   API key forwarded to the active provider.
+     * @param userId The Firebase UID of the AI participant.
      */
-    fun configureAi(
-        targetId: String,
-        provider: AiProvider = AiProvider.ZAI,
-        apiKey: String,
-    ) {
-        aiTargetId = targetId
-        aiProvider = provider
-        aiApiKey   = apiKey
-        Timber.d("ChatViewModel: AI configured — provider=${provider.label}, target=$targetId")
+    fun configureAi(userId: String) {
+        this.aiUserId = userId
+        Timber.d("ChatViewModel: AI configured for userId=$userId")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -185,7 +167,7 @@ class ChatViewModel @Inject constructor(
 
         _uiState.update { state ->
             state.copy(
-                peerName      = user.displayName.takeIf { it.isNotBlank() }
+                peerName = user.displayName.takeIf { it.isNotBlank() }
                     ?: user.username.takeIf { it.isNotBlank() }
                     ?: "Unknown",
                 peerAvatarUrl = user.photoUrl ?: ""
@@ -199,15 +181,15 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun observePeerPresence(peerId: String) {
         userRepository.observeUserStatus(peerId).collect { status ->
-            val now               = System.currentTimeMillis()
-            val lastSeenMs        = status.lastSeen ?: 0L
+            val now = System.currentTimeMillis()
+            val lastSeenMs = status.lastSeen ?: 0L
             val effectivelyOnline = status.online && (now - lastSeenMs) < onlineStalenessMs
 
             _uiState.update { state ->
                 state.copy(
                     isPeerOnline = effectivelyOnline,
                     isPeerTyping = if (!effectivelyOnline) false else state.isPeerTyping,
-                    lastSeen     = if (effectivelyOnline) "online" else formatLastSeen(lastSeenMs)
+                    lastSeen = if (effectivelyOnline) "online" else formatLastSeen(lastSeenMs)
                 )
             }
         }
@@ -242,8 +224,8 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             messageRepository.updateMessageStatusBatch(
                 conversationId = conversationId,
-                messageIds     = undeliveredIds,
-                status         = MessageStatus.DELIVERED
+                messageIds = undeliveredIds,
+                status = MessageStatus.DELIVERED
             )
         }
     }
@@ -269,14 +251,11 @@ class ChatViewModel @Inject constructor(
     }
 
     /**
-     * Sends the current input as a user message, then — if AI mode is
-     * configured — delegates the full reply pipeline to [AiMessageManager].
-     *
-     * Fire-and-forget in AI mode. The reply streams back through
-     * [observeMessages] exactly like any other message.
+     * Sends the current input as a user message.
+     * If AI is configured, it delegates the reply generation to [AiMessageManager].
      */
     fun sendMessage() {
-        val text           = _uiState.value.inputText.trim()
+        val text = _uiState.value.inputText.trim()
         val conversationId = currentConversationId
         if (text.isEmpty() || conversationId == null) return
 
@@ -287,18 +266,18 @@ class ChatViewModel @Inject constructor(
             val userMessage = Message(
                 parentId = conversationId,
                 senderId = currentUserId,
-                content  = text,
-                type     = MessageType.TEXT.value
+                content = text,
+                type = MessageType.TEXT.value
             )
 
             messageRepository.sendMessage(conversationId, userMessage)
                 .onSuccess { messageId ->
                     val preview = MessagePreview(
                         messageId = messageId,
-                        parentId  = conversationId,
-                        senderId  = currentUserId,
-                        content   = text,
-                        type      = MessageType.TEXT.value
+                        parentId = conversationId,
+                        senderId = currentUserId,
+                        content = text,
+                        type = MessageType.TEXT.value
                     )
 
                     messageRepository.updateLastMessage(conversationId, preview)
@@ -311,13 +290,15 @@ class ChatViewModel @Inject constructor(
                             Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
                         }
 
-                    if (aiTargetId.isEmpty()) return@onSuccess
-                    launch {
-                        manager.push(
-                            userMessage    = text,
-                            targetId       = aiTargetId,
-                            conversationId = conversationId
-                        )
+                    // Trigger AI response if configured
+                    if (aiUserId.isNotEmpty()) {
+                        launch {
+                            aiMessageManager.push(
+                                userMessage = text,
+                                targetId = aiUserId,
+                                conversationId = conversationId
+                            )
+                        }
                     }
                 }
                 .onFailure {
@@ -347,16 +328,19 @@ class ChatViewModel @Inject constructor(
         peerProfileJob?.cancel()
         peerPresenceJob?.cancel()
         peerTypingJob?.cancel()
-        peerProfileJob  = null
+        peerProfileJob = null
         peerPresenceJob = null
-        peerTypingJob   = null
+        peerTypingJob = null
     }
 
     private fun stopSelfTypingInternal() {
         selfTypingStopJob?.cancel()
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
-        if (aiTargetId.isNotEmpty()) return
+
+        // Optimization: No need to broadcast typing status to AI conversations
+        if (aiUserId.isNotEmpty()) return
+
         viewModelScope.launch {
             messageRepository.setTyping(conversationId, uid = currentUserId, typing = false)
         }
