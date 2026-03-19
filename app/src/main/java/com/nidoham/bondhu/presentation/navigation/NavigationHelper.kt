@@ -73,14 +73,28 @@ object NavigationHelper {
     )
 
     /**
-     * Opens [ChatActivity] for the given [conversationId] and optional [targetUid].
+     * Opens [ChatActivity].
+     * Can be opened via an existing [conversationId] OR by providing a [targetUid] for a new/existing chat.
      */
-    fun navigateToChat(context: Context, conversationId: String, targetUid: String? = null, ai: Boolean = false) {
-        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+    fun navigateToChat(
+        context: Context,
+        conversationId: String? = null,
+        targetUid: String? = null,
+        ai: Boolean = false
+    ) {
+        // Validation: Ensure at least one ID is provided to open the chat
+        require(!conversationId.isNullOrBlank() || !targetUid.isNullOrBlank()) {
+            "Either conversationId or targetUid must be provided"
+        }
+
         val intent = Intent(context, ChatActivity::class.java).apply {
-            putExtra(EXTRA_CONVERSATION_ID, conversationId)
+            conversationId?.takeIf { it.isNotBlank() }?.let {
+                putExtra(EXTRA_CONVERSATION_ID, it)
+            }
+            targetUid?.takeIf { it.isNotBlank() }?.let {
+                putExtra(EXTRA_TARGET_ID, it)
+            }
             putExtra(EXTRA_TARGET_AI, ai)
-            targetUid?.let { putExtra(EXTRA_TARGET_ID, it) }
         }
         launch(context = context, intent = intent, transition = slideTransition(context))
     }
