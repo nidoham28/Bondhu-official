@@ -286,7 +286,7 @@ class ChatViewModel @Inject constructor(
                         .onFailure { e -> Timber.tag(TAG).e(e, "Failed to increment message count") }
 
                     // Trigger AI Logic
-                    if (targetAI) {
+                    if (!targetAI) {
                         Timber.tag(TAG).i("AI Mode Active: Requesting reply from AI ($targetId)")
                         launch {
                             aiMessageManager.push(
