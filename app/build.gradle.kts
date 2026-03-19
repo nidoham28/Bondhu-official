@@ -14,8 +14,8 @@ android {
         applicationId = "com.nidoham.bondhu"
         minSdk        = 26
         targetSdk     = 36
-        versionCode   = 5
-        versionName   = "1.0.5-alpha"
+        versionCode   = 6
+        versionName   = "1.1.1-ai"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
