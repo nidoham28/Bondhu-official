@@ -18,8 +18,6 @@ class AiMessageManager @Inject constructor(
 
     /**
      * Sends a user message to AI and writes AI response to conversation.
-     * Note: This currently resets the session history for every request.
-     * TODO: Consider loading existing conversation history from DB for context retention.
      */
     suspend fun push(
         userMessage: String,
@@ -27,6 +25,7 @@ class AiMessageManager @Inject constructor(
         conversationId: String
     ) {
         // Reset history for this request (Stateless behavior)
+        // TODO: Load history from DB if context retention is desired.
         chatSession.clearHistory()
 
         when (val result = chatSession.chat(userMessage)) {
@@ -66,12 +65,15 @@ class AiMessageManager @Inject constructor(
         withContext(Dispatchers.IO) {
             val message = Message(
                 parentId = conversationId,
-                senderId = targetId,
+                senderId = targetId, // The AI's UID
                 content = content,
                 type = MessageType.TEXT.value
             )
 
-            messageRepository.sendMessage(conversationId, message)
+            // FIX: Use addMessage instead of sendMessage.
+            // 'sendMessage' enforces senderId == currentUserId (which fails for AI).
+            // 'addMessage' bypasses this check for system/AI generated content.
+            messageRepository.addMessage(conversationId, message)
                 .onSuccess { messageId ->
                     val preview = MessagePreview(
                         messageId = messageId,
@@ -92,7 +94,7 @@ class AiMessageManager @Inject constructor(
                         }
                 }
                 .onFailure { e ->
-                    Timber.e(e, "Failed sending message to conversation $conversationId")
+                    Timber.e(e, "Failed sending AI message to conversation $conversationId")
                 }
         }
     }

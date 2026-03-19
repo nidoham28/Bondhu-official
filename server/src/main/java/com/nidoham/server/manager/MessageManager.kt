@@ -28,10 +28,6 @@ import kotlinx.coroutines.tasks.await
  *
  * Schema: message/{conversationId}/messages/{messageId}
  *
- * All operations are keyed by [conversationId] and, where applicable,
- * [messageId]. [sendMessage] auto-generates [messageId] when [Message.messageId]
- * is blank.
- *
  * @param firestore Injectable [FirebaseFirestore] instance.
  * @param auth      Injectable [FirebaseAuth] instance.
  */
@@ -41,24 +37,20 @@ class MessageManager(
 ) {
 
     companion object {
-        private const val ROOT         = "message"
-        private const val MESSAGES     = "messages"
-        private const val PAGE_SIZE    = 30
+        private const val ROOT = "message"
+        private const val MESSAGES = "messages"
+        private const val PAGE_SIZE = 30
 
         private const val FIELD_MESSAGE_ID = "messageId"
-        private const val FIELD_PARENT_ID  = "parentId"
-        private const val FIELD_SENDER_ID  = "senderId"
-        private const val FIELD_CONTENT    = "content"
-        private const val FIELD_REPLY_TO   = "replyTo"
-        private const val FIELD_TIMESTAMP  = "timestamp"
-        private const val FIELD_EDITED_AT  = "editedAt"
-        private const val FIELD_TYPE       = "type"
-        private const val FIELD_STATUS     = "status"
+        private const val FIELD_PARENT_ID = "parentId"
+        private const val FIELD_SENDER_ID = "senderId"
+        private const val FIELD_CONTENT = "content"
+        private const val FIELD_REPLY_TO = "replyTo"
+        private const val FIELD_TIMESTAMP = "timestamp"
+        private const val FIELD_EDITED_AT = "editedAt"
+        private const val FIELD_TYPE = "type"
+        private const val FIELD_STATUS = "status"
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // References
-    // ─────────────────────────────────────────────────────────────────────────
 
     private fun messagesCollection(conversationId: String) =
         firestore.collection(ROOT).document(conversationId).collection(MESSAGES)
@@ -71,15 +63,8 @@ class MessageManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Writes a new message to the given conversation.
-     *
-     * If [Message.messageId] is blank, Firestore auto-generates the document ID
-     * and the field is populated before the write. [Message.senderId] is validated
-     * against the authenticated user to prevent spoofing.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param message        The [Message] to persist.
-     * @return The message document ID on success.
+     * Writes a new message validated against the current authenticated user.
+     * Use this for standard user-to-user messages.
      */
     suspend fun sendMessage(
         conversationId: String,
@@ -90,20 +75,45 @@ class MessageManager(
         require(message.senderId == currentUser.uid) {
             "senderId ('${message.senderId}') must match the authenticated user ('${currentUser.uid}')."
         }
-        val docRef = if (message.messageId.isBlank()) messagesCollection(conversationId).document()
-        else messageDocument(conversationId, message.messageId)
-
-        docRef.set(message.copy(messageId = docRef.id, parentId = conversationId)).await()
-        docRef.id
+        saveMessage(conversationId, message)
     }
 
     /**
-     * Writes multiple messages to the same conversation in a single atomic batch,
-     * reducing round-trips. All entries are validated before the batch is committed.
+     * Writes a message WITHOUT validating the sender ID.
+     *
+     * Use this for system-generated messages, notifications, or AI responses
+     * where the sender is a bot ID, not the currently authenticated user.
      *
      * @param conversationId Parent conversation ID.
-     * @param messages       List of [Message] objects to persist.
-     * @return A list of generated message IDs in the same order as [messages].
+     * @param message        The [Message] to persist.
+     * @return The message document ID on success.
+     */
+    suspend fun addMessage(
+        conversationId: String,
+        message: Message
+    ): Result<String> = runCatching {
+        saveMessage(conversationId, message)
+    }
+
+    /**
+     * Internal helper to persist message to Firestore.
+     */
+    private suspend fun saveMessage(conversationId: String, message: Message): String {
+        val docRef = if (message.messageId.isBlank()) messagesCollection(conversationId).document()
+        else messageDocument(conversationId, message.messageId)
+
+        val finalMessage = message.copy(
+            messageId = docRef.id,
+            parentId = conversationId,
+            timestamp = message.timestamp
+        )
+
+        docRef.set(finalMessage).await()
+        return docRef.id
+    }
+
+    /**
+     * Writes multiple messages validated against the current user.
      */
     suspend fun sendMessagesBatch(
         conversationId: String,
@@ -114,7 +124,7 @@ class MessageManager(
         require(messages.isNotEmpty()) { "Messages list must not be empty." }
 
         val batch = firestore.batch()
-        val ids   = mutableListOf<String>()
+        val ids = mutableListOf<String>()
 
         messages.forEach { message ->
             require(message.senderId == currentUser.uid) {
@@ -131,12 +141,31 @@ class MessageManager(
     }
 
     /**
-     * Replaces the content of an existing message and stamps [FIELD_EDITED_AT]
-     * with the current server timestamp. Only the original sender may edit.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageId      Message document ID.
-     * @param newContent     Replacement content string.
+     * Writes multiple messages WITHOUT validating the sender.
+     * Useful for injecting multiple system messages at once.
+     */
+    suspend fun addMessagesBatch(
+        conversationId: String,
+        messages: List<Message>
+    ): Result<List<String>> = runCatching {
+        require(messages.isNotEmpty()) { "Messages list must not be empty." }
+
+        val batch = firestore.batch()
+        val ids = mutableListOf<String>()
+
+        messages.forEach { message ->
+            val docRef = if (message.messageId.isBlank()) messagesCollection(conversationId).document()
+            else messageDocument(conversationId, message.messageId)
+            ids.add(docRef.id)
+            batch.set(docRef, message.copy(messageId = docRef.id, parentId = conversationId))
+        }
+
+        batch.commit().await()
+        ids
+    }
+
+    /**
+     * Replaces the content of an existing message. Only the original sender may edit.
      */
     suspend fun editMessage(
         conversationId: String,
@@ -156,19 +185,15 @@ class MessageManager(
 
         messageDocument(conversationId, messageId).update(
             mapOf(
-                FIELD_CONTENT   to newContent,
+                FIELD_CONTENT to newContent,
                 FIELD_EDITED_AT to FieldValue.serverTimestamp(),
-                FIELD_STATUS    to MessageStatus.SENT.value
+                FIELD_STATUS to MessageStatus.SENT.value
             )
         ).await()
     }
 
     /**
      * Updates the delivery or read status of a single message.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageId      Message document ID.
-     * @param status         The new [MessageStatus] to apply.
      */
     suspend fun updateMessageStatus(
         conversationId: String,
@@ -182,10 +207,6 @@ class MessageManager(
 
     /**
      * Updates the status of multiple messages in a single atomic batch write.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageIds     Message document IDs to update.
-     * @param status         The new [MessageStatus] to apply to all entries.
      */
     suspend fun updateMessageStatusBatch(
         conversationId: String,
@@ -202,9 +223,6 @@ class MessageManager(
 
     /**
      * Deletes a single message document.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageId      Message document ID to delete.
      */
     suspend fun deleteMessage(conversationId: String, messageId: String): Result<Unit> = runCatching {
         messageDocument(conversationId, messageId).delete().await()
@@ -212,9 +230,6 @@ class MessageManager(
 
     /**
      * Deletes multiple message documents in a single atomic batch write.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageIds     Message document IDs to delete.
      */
     suspend fun deleteMessagesBatch(
         conversationId: String,
@@ -227,12 +242,7 @@ class MessageManager(
     }
 
     /**
-     * Deletes all messages within a conversation by fetching all document IDs and
-     * issuing batch deletes in chunks of 500, respecting Firestore's hard batch limit.
-     *
-     * Typically called before deleting the parent conversation document.
-     *
-     * @param conversationId Parent conversation ID.
+     * Deletes all messages within a conversation.
      */
     suspend fun deleteAllMessages(conversationId: String): Result<Unit> = runCatching {
         val ids = messagesCollection(conversationId).get().await().documents.map { it.id }
@@ -247,12 +257,6 @@ class MessageManager(
     // Read — Single & Batch
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Fetches a single [Message] by its ID, or null if the document does not exist.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageId      Message document ID.
-     */
     suspend fun fetchMessage(
         conversationId: String,
         messageId: String
@@ -260,13 +264,6 @@ class MessageManager(
         messageDocument(conversationId, messageId).get().await().toObject(Message::class.java)
     }
 
-    /**
-     * Fetches multiple messages by their IDs in parallel. Documents that do not
-     * exist are silently omitted from the result.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageIds     Message document IDs to retrieve.
-     */
     suspend fun fetchMessagesByIds(
         conversationId: String,
         messageIds: List<String>
@@ -280,13 +277,6 @@ class MessageManager(
         }
     }
 
-    /**
-     * Applies a [MessageFilter] to the messages sub-collection and returns all
-     * matching records as a plain list.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param filter         [MessageFilter] describing the desired constraints.
-     */
     suspend fun fetchMessagesFiltered(
         conversationId: String,
         filter: MessageFilter
@@ -301,20 +291,6 @@ class MessageManager(
     // Search
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Searches messages whose content starts with [prefix] using a lexicographic
-     * range query. Firestore does not support native full-text search; only
-     * prefix matches are possible here.
-     *
-     * For case-insensitive matching, normalise content to lowercase at write time
-     * and pass a lowercase [prefix]. Requires an ascending index on `content`.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param prefix         Content prefix to match; must not be blank.
-     * @param filter         Optional [MessageFilter] for additional sender, type,
-     *                       or status constraints (range/sort on content is already applied).
-     * @param limit          Maximum results to return.
-     */
     suspend fun searchMessagesByContent(
         conversationId: String,
         prefix: String,
@@ -330,21 +306,12 @@ class MessageManager(
             .limit(limit)
 
         filter?.senderId?.let { query = query.whereEqualTo(FIELD_SENDER_ID, it) }
-        filter?.type?.let     { query = query.whereEqualTo(FIELD_TYPE, it.value) }
-        filter?.status?.let   { query = query.whereEqualTo(FIELD_STATUS, it.value) }
+        filter?.type?.let { query = query.whereEqualTo(FIELD_TYPE, it.value) }
+        filter?.status?.let { query = query.whereEqualTo(FIELD_STATUS, it.value) }
 
         query.get().await().toObjects(Message::class.java)
     }
 
-    /**
-     * Fetches all messages from a specific sender within the given conversation,
-     * ordered by timestamp descending. Optionally filtered by [MessageStatus].
-     *
-     * @param conversationId Parent conversation ID.
-     * @param senderId       Firebase UID of the sender to filter by.
-     * @param status         Optional [MessageStatus] to narrow results.
-     * @param limit          Maximum results to return.
-     */
     suspend fun searchMessagesBySender(
         conversationId: String,
         senderId: String,
@@ -360,14 +327,6 @@ class MessageManager(
         query.get().await().toObjects(Message::class.java)
     }
 
-    /**
-     * Fetches all replies targeting [parentMessageId], ordered by timestamp
-     * ascending so the thread reads chronologically.
-     *
-     * @param conversationId  Parent conversation ID.
-     * @param parentMessageId Message ID that replies reference in [replyTo].
-     * @param limit           Maximum results to return.
-     */
     suspend fun fetchReplies(
         conversationId: String,
         parentMessageId: String,
@@ -387,13 +346,6 @@ class MessageManager(
     // Real-Time Listeners
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Emits an updated [Message] whenever the given document changes, or null
-     * if the document no longer exists.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param messageId      Message document ID to observe.
-     */
     fun observeMessage(conversationId: String, messageId: String): Flow<Message?> = callbackFlow {
         val reg: ListenerRegistration =
             messageDocument(conversationId, messageId).addSnapshotListener { snapshot, error ->
@@ -403,19 +355,11 @@ class MessageManager(
         awaitClose { reg.remove() }
     }
 
-    /**
-     * Emits an updated list of [Message] objects whenever the messages
-     * sub-collection changes, ordered by timestamp descending. An optional
-     * [MessageFilter] narrows the observed query.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param filter         Optional [MessageFilter] to restrict the observed query.
-     */
     fun observeMessages(
         conversationId: String,
         filter: MessageFilter? = null
     ): Flow<List<Message>> = callbackFlow {
-        val base  = messagesCollection(conversationId)
+        val base = messagesCollection(conversationId)
             .orderBy(FIELD_TIMESTAMP, Query.Direction.DESCENDING)
         val query = filter?.applyTo(base) ?: base
 
@@ -426,14 +370,6 @@ class MessageManager(
         awaitClose { reg.remove() }
     }
 
-    /**
-     * Emits real-time reply messages targeting [parentMessageId], ordered
-     * ascending. The listener is removed automatically when the [Flow] is cancelled.
-     *
-     * @param conversationId  Parent conversation ID.
-     * @param parentMessageId Message ID that replies reference in [replyTo].
-     * @param limit           Maximum live results to stream.
-     */
     fun observeReplies(
         conversationId: String,
         parentMessageId: String,
@@ -459,13 +395,6 @@ class MessageManager(
     // Paging3
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Returns a cursor-paginated [Flow] over the messages sub-collection,
-     * ordered by timestamp descending — the standard pattern for chat UIs.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param pageSize       Documents per page.
-     */
     fun fetchMessagesPaged(
         conversationId: String,
         pageSize: Int = PAGE_SIZE
@@ -480,14 +409,6 @@ class MessageManager(
         }
     ).flow
 
-    /**
-     * Returns a cursor-paginated [Flow] with a [MessageFilter] applied, allowing
-     * filtered message lists to benefit from incremental loading.
-     *
-     * @param conversationId Parent conversation ID.
-     * @param filter         [MessageFilter] to apply before paginating.
-     * @param pageSize       Documents per page.
-     */
     fun fetchMessagesFilteredPaged(
         conversationId: String,
         filter: MessageFilter,
@@ -506,32 +427,6 @@ class MessageManager(
 // MessageFilter
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Immutable, composable filter descriptor for message queries.
- *
- * Only non-null fields are applied to the Firestore query. Combining multiple
- * inequality or ordering constraints may require a composite Firestore index.
- *
- * Usage:
- * ```kotlin
- * val filter = MessageFilter(
- *     senderId  = "user123",
- *     type      = MessageType.TEXT,
- *     status    = MessageStatus.SENT,
- *     after     = Timestamp(1_700_000_000, 0),
- *     sortOrder = Query.Direction.ASCENDING
- * )
- * ```
- *
- * @param senderId  Filters messages by a specific sender UID.
- * @param type      Filters messages by [MessageType].
- * @param status    Filters messages by [MessageStatus].
- * @param replyTo   Filters messages that are replies to a specific message ID.
- * @param after     Includes only messages sent after this [Timestamp].
- * @param before    Includes only messages sent before this [Timestamp].
- * @param sortOrder Sort direction on timestamp; defaults to [Query.Direction.DESCENDING].
- * @param limit     Caps the result set to this many documents.
- */
 data class MessageFilter(
     val senderId: String? = null,
     val type: MessageType? = null,
@@ -544,49 +439,33 @@ data class MessageFilter(
 ) {
     companion object {
         private const val FIELD_SENDER_ID = "senderId"
-        private const val FIELD_TYPE      = "type"
-        private const val FIELD_STATUS    = "status"
-        private const val FIELD_REPLY_TO  = "replyTo"
+        private const val FIELD_TYPE = "type"
+        private const val FIELD_STATUS = "status"
+        private const val FIELD_REPLY_TO = "replyTo"
         private const val FIELD_TIMESTAMP = "timestamp"
 
-        /** All pending messages, oldest first. */
         val PENDING = MessageFilter(
-            status    = MessageStatus.PENDING,
+            status = MessageStatus.PENDING,
             sortOrder = Query.Direction.ASCENDING
         )
 
-        /** All text messages, newest first. */
         val TEXT_ONLY = MessageFilter(type = MessageType.TEXT)
     }
 
-    /** Applies all non-null constraints to [query] and returns the result. */
     fun applyTo(query: Query): Query {
         var q = query
         senderId?.let { q = q.whereEqualTo(FIELD_SENDER_ID, it) }
-        type?.let     { q = q.whereEqualTo(FIELD_TYPE, it.value) }
-        status?.let   { q = q.whereEqualTo(FIELD_STATUS, it.value) }
-        replyTo?.let  { q = q.whereEqualTo(FIELD_REPLY_TO, it) }
-        after?.let    { q = q.whereGreaterThan(FIELD_TIMESTAMP, it) }
-        before?.let   { q = q.whereLessThan(FIELD_TIMESTAMP, it) }
+        type?.let { q = q.whereEqualTo(FIELD_TYPE, it.value) }
+        status?.let { q = q.whereEqualTo(FIELD_STATUS, it.value) }
+        replyTo?.let { q = q.whereEqualTo(FIELD_REPLY_TO, it) }
+        after?.let { q = q.whereGreaterThan(FIELD_TIMESTAMP, it) }
+        before?.let { q = q.whereLessThan(FIELD_TIMESTAMP, it) }
         q = q.orderBy(FIELD_TIMESTAMP, sortOrder)
-        limit?.let    { q = q.limit(it) }
+        limit?.let { q = q.limit(it) }
         return q
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MessagePagingSource
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Firestore-backed [PagingSource] for [Message] documents.
- *
- * Uses cursor-based pagination via [DocumentSnapshot.startAfter] to avoid
- * re-reading previously loaded pages. Only forward pagination is supported;
- * a refresh always restarts from the most recent page.
- *
- * @param query Base Firestore [Query]; must include a [Query.limit] clause.
- */
 class MessagePagingSource(
     private val query: Query
 ) : PagingSource<DocumentSnapshot, Message>() {
@@ -595,9 +474,9 @@ class MessagePagingSource(
         params: LoadParams<DocumentSnapshot>
     ): LoadResult<DocumentSnapshot, Message> = try {
         val pageQuery = params.key?.let { query.startAfter(it) } ?: query
-        val snapshot  = pageQuery.get().await()
-        val messages  = snapshot.toObjects(Message::class.java)
-        val nextKey   = snapshot.documents.lastOrNull().takeUnless { snapshot.isEmpty }
+        val snapshot = pageQuery.get().await()
+        val messages = snapshot.toObjects(Message::class.java)
+        val nextKey = snapshot.documents.lastOrNull().takeUnless { snapshot.isEmpty }
 
         LoadResult.Page(data = messages, prevKey = null, nextKey = nextKey)
     } catch (e: Exception) {
