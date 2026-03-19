@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.domain.message.MessagePreview
+import com.nidoham.server.manager.AiMessageSender
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
+import com.nidoham.server.util.AiProvider
 import com.nidoham.server.util.MessageStatus
 import com.nidoham.server.util.MessageType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,7 +38,7 @@ data class ChatUiState(
     val peerAvatarUrl: String = "",
     val isPeerOnline: Boolean = false,
     val lastSeen: String = "",
-    val isPeerTyping: Boolean = false
+    val isPeerTyping: Boolean = false,
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +49,8 @@ data class ChatUiState(
 class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
-    private val firebaseAuth: FirebaseAuth
+    private val firebaseAuth: FirebaseAuth,
+    private val aiMessageSender: AiMessageSender,
 ) : ViewModel() {
 
     // ── Thresholds ────────────────────────────────────────────────────────────
@@ -68,6 +71,12 @@ class ChatViewModel @Inject constructor(
     private var currentConversationId: String? = null
     private var currentPeerId: String? = null
 
+    // ── AI session config — set once via configureAi() ───────────────────────
+
+    private var aiTargetId: String? = null
+    private var aiProvider: AiProvider = AiProvider.ZAI
+    private var aiApiKey: String = ""
+
     // ── Coroutine jobs ────────────────────────────────────────────────────────
 
     private var chatObservationJob: Job? = null
@@ -83,9 +92,6 @@ class ChatViewModel @Inject constructor(
     fun initChat(conversationId: String) {
         if (currentConversationId == conversationId) return
 
-        // Cancel all peer-level jobs from any previous session before the
-        // conversation ID changes, so stale streams do not bleed into the
-        // new session.
         cancelPeerJobs()
         stopSelfTypingInternal()
 
@@ -96,7 +102,7 @@ class ChatViewModel @Inject constructor(
         chatObservationJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            // Stream 1: resolve the peer UID from the participants sub-collection.
+            // Stream 1: resolve peer UID from the participants sub-collection.
             launch {
                 messageRepository.observeParticipants(conversationId)
                     .catch { e ->
@@ -141,6 +147,31 @@ class ChatViewModel @Inject constructor(
                     }
             }
         }
+    }
+
+    /**
+     * Configures this conversation for AI replies.
+     *
+     * Call this once after [initChat] — typically from [ChatActivity] when
+     * the conversation is known to be an AI chat. After calling this, every
+     * [sendMessage] invocation will trigger [AiMessageSender.send] in a
+     * fire-and-forget coroutine. The ViewModel holds no result state; all
+     * outcomes (reply, coming-soon, or error) are written directly to the DB
+     * by [AiMessageSender] and stream back through [observeMessages].
+     *
+     * @param targetId The AI participant's UID in Firebase.
+     * @param provider Which AI backend to use. Defaults to [AiProvider.ZAI].
+     * @param apiKey   API key forwarded to the active provider.
+     */
+    fun configureAi(
+        targetId: String,
+        provider: AiProvider = AiProvider.ZAI,
+        apiKey: String,
+    ) {
+        aiTargetId = targetId
+        aiProvider = provider
+        aiApiKey   = apiKey
+        Timber.d("ChatViewModel: AI configured — provider=${provider.label}, target=$targetId")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -192,6 +223,9 @@ class ChatViewModel @Inject constructor(
         messageRepository.observeTyping(conversationId)
             .catch { _uiState.update { it.copy(isPeerTyping = false) } }
             .collect { typingState ->
+                // This stream covers both human peers and AI peers — AiMessageSender
+                // writes the AI's typing state to the same node under targetId,
+                // so this single collector handles all cases transparently.
                 _uiState.update { it.copy(isPeerTyping = peerId in typingState.typingUserIds) }
             }
     }
@@ -201,12 +235,10 @@ class ChatViewModel @Inject constructor(
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun markUndeliveredMessages(conversationId: String, messages: List<Message>) {
-        // Only promote messages from the peer that are still in PENDING status.
-        // Use MessageStatus.PENDING.value to match the serialized Firestore field value.
         val undeliveredIds = messages
             .filter { msg ->
                 msg.senderId != currentUserId &&
-                        msg.status   == MessageStatus.PENDING.value
+                        msg.status == MessageStatus.PENDING.value
             }
             .map { it.messageId }
 
@@ -229,6 +261,10 @@ class ChatViewModel @Inject constructor(
         val conversationId = currentConversationId ?: return
         _uiState.update { it.copy(inputText = text, isSendError = false) }
 
+        // Suppress self-typing signals in AI conversations — the remote
+        // participant is not human and does not read typing notifications.
+        if (aiTargetId != null) return
+
         if (text.isNotBlank()) {
             viewModelScope.launch { messageRepository.setTyping(conversationId, true) }
             selfTypingStopJob?.cancel()
@@ -241,6 +277,15 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Sends the current input as a user message, then — if AI mode is
+     * configured — delegates the full reply pipeline to [AiMessageSender].
+     *
+     * In AI mode the ViewModel does exactly two things after a successful
+     * user message write: launch [AiMessageSender.send] and return. No
+     * result is observed. The AI reply (or any error/coming-soon message)
+     * streams back through [observeMessages] exactly like any other message.
+     */
     fun sendMessage() {
         val text           = _uiState.value.inputText.trim()
         val conversationId = currentConversationId
@@ -250,31 +295,23 @@ class ChatViewModel @Inject constructor(
         stopSelfTypingInternal()
 
         viewModelScope.launch {
-            val message = Message(
+            val userMessage = Message(
                 parentId = conversationId,
                 senderId = currentUserId,
                 content  = text,
                 type     = MessageType.TEXT.value
             )
 
-            messageRepository.sendMessage(conversationId, message)
+            messageRepository.sendMessage(conversationId, userMessage)
                 .onSuccess { messageId ->
-                    // Build the preview from the values we already have in scope.
-                    // timestamp is null here because @ServerTimestamp is resolved
-                    // by Firestore after the write — the preview stores whatever
-                    // the server assigns, so null is the correct client-side value
-                    // at this point and will be overwritten on the next read.
                     val preview = MessagePreview(
                         messageId = messageId,
-                        parentId = conversationId,
-                        senderId = currentUserId,
-                        content = text,
-                        type = MessageType.TEXT.value
+                        parentId  = conversationId,
+                        senderId  = currentUserId,
+                        content   = text,
+                        type      = MessageType.TEXT.value
                     )
 
-                    // These two calls can fail independently without affecting the
-                    // already-committed message. Log failures but do not surface
-                    // them to the user — the message itself was sent successfully.
                     messageRepository.updateLastMessage(conversationId, preview)
                         .onFailure { e ->
                             Timber.w(e, "ChatViewModel: failed to update lastMessage for $conversationId")
@@ -284,6 +321,20 @@ class ChatViewModel @Inject constructor(
                         .onFailure { e ->
                             Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
                         }
+
+                    // Trigger AI reply — fire and forget. The ViewModel handles
+                    // nothing; all DB writes happen inside AiMessageSender.
+                    val targetId = aiTargetId ?: return@onSuccess
+                    launch {
+                        aiMessageSender.send(
+                            userId         = currentUserId,
+                            conversationId = conversationId,
+                            targetId       = targetId,
+                            userInput      = text,
+                            provider       = aiProvider,
+                            apiKey         = aiApiKey,
+                        )
+                    }
                 }
                 .onFailure {
                     _uiState.update { it.copy(inputText = text, isSendError = true) }
@@ -296,12 +347,10 @@ class ChatViewModel @Inject constructor(
 
     /**
      * Returns true if the peer has promoted this message's status to [MessageStatus.READ].
-     * Relies on [MessageStatus.READ.value] to match the serialized Firestore field value
-     * rather than the enum constant name.
      */
     fun isReadByPeer(message: Message): Boolean =
         message.senderId == currentUserId &&
-                message.status   == MessageStatus.READ.value   // fixed: was .name.lowercase()
+                message.status == MessageStatus.READ.value
 
     fun clearError() = _uiState.update { it.copy(isSendError = false) }
 
@@ -321,16 +370,11 @@ class ChatViewModel @Inject constructor(
         peerTypingJob   = null
     }
 
-    /**
-     * Cancels the idle-stop timer and sends an explicit stop-typing signal.
-     * Must not call [viewModelScope.launch] after [onCleared] has invoked
-     * [super.onCleared], so the coroutine is only launched when [viewModelScope]
-     * is still active.
-     */
     private fun stopSelfTypingInternal() {
         selfTypingStopJob?.cancel()
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
+        if (aiTargetId != null) return
         viewModelScope.launch {
             messageRepository.setTyping(conversationId, false)
         }
@@ -341,9 +385,6 @@ class ChatViewModel @Inject constructor(
     // ─────────────────────────────────────────────────────────────────────────
 
     override fun onCleared() {
-        // stopSelfTypingInternal() must be called before super.onCleared() because
-        // super.onCleared() cancels viewModelScope, after which the coroutine
-        // launched inside stopSelfTypingInternal() would silently no-op.
         stopSelfTypingInternal()
         cancelPeerJobs()
         chatObservationJob?.cancel()

@@ -99,10 +99,9 @@ class TypingManager(
      */
     suspend fun setTyping(
         conversationId: String,
+        uid: String = auth.currentUser?.uid ?: error("No authenticated user"),
         typing: Boolean
     ): Result<Unit> = runCatching {
-        val uid = auth.currentUser?.uid
-            ?: error("No authenticated user is signed in.")
         val ref = userRef(conversationId, uid)
 
         if (typing) {
@@ -123,7 +122,7 @@ class TypingManager(
      * @param conversationId The conversation to clear the indicator for.
      */
     suspend fun clearTyping(conversationId: String): Result<Unit> =
-        setTyping(conversationId, false)
+        setTyping(conversationId = conversationId, typing = false)
 
     /**
      * Removes the typing indicator for a specific [userId] regardless of which

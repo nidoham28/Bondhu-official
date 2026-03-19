@@ -841,8 +841,9 @@ class MessageRepository(
      */
     suspend fun setTyping(
         conversationId: String,
+        uid: String,
         typing: Boolean
-    ): Result<Unit> = typingManager.setTyping(conversationId, typing)
+    ): Result<Unit> = typingManager.setTyping(conversationId,uid , typing)
 
     /**
      * Explicitly clears the typing indicator for the currently authenticated user.

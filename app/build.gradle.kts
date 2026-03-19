@@ -143,6 +143,8 @@ dependencies {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
 
+    implementation(libs.bondhuai)
+
     // Media3
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)

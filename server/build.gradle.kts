@@ -64,6 +64,8 @@ dependencies {
     // Logging
     implementation(libs.timber)
 
+    implementation(libs.bondhuai)
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
