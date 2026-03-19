@@ -31,12 +31,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    packaging {
-        resources {
-            excludes += "/google/protobuf/**"
-        }
-    }
 }
 
 dependencies {
@@ -64,7 +58,7 @@ dependencies {
     // Logging
     implementation(libs.timber)
 
-    implementation(libs.bondhuai)
+    implementation("com.github.nidoham28:BondhuAI:ded6f4f110")
 
     // Testing
     testImplementation(libs.junit)

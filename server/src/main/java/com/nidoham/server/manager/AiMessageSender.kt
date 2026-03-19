@@ -6,9 +6,6 @@ import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.util.AiProvider
 import com.nidoham.server.util.MessageType
-import ai.z.openapi.service.model.ChatMessage
-import ai.z.openapi.service.model.ChatMessageRole
-import ai.z.openapi.service.model.ChatThinking
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject

@@ -44,12 +44,6 @@ android {
         compose     = true
         buildConfig = true
     }
-
-    packaging {
-        resources {
-            excludes += "/google/protobuf/**"
-        }
-    }
 }
 
 dependencies {
@@ -143,7 +137,7 @@ dependencies {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
 
-    implementation(libs.bondhuai)
+    implementation("com.github.nidoham28:BondhuAI:ded6f4f110")
 
     // Media3
     implementation(libs.androidx.media3.exoplayer)
