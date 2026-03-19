@@ -834,16 +834,17 @@ class MessageRepository(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Records that the currently authenticated user has started or stopped typing.
+     * Records that a specific user has started or stopped typing.
      *
      * @param conversationId The conversation in which the typing event occurred.
+     * @param uid            The Firebase UID of the user typing.
      * @param typing         True if the user is currently typing; false otherwise.
      */
     suspend fun setTyping(
         conversationId: String,
         uid: String,
         typing: Boolean
-    ): Result<Unit> = typingManager.setTyping(conversationId,uid , typing)
+    ): Result<Unit> = typingManager.setTyping(conversationId, uid, typing)
 
     /**
      * Explicitly clears the typing indicator for the currently authenticated user.

@@ -3,9 +3,10 @@ package com.nidoham.bondhu.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.nidoham.server.api.API
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.domain.message.MessagePreview
-import com.nidoham.server.manager.AiMessageSender
+import com.nidoham.server.manager.AiMessageManager
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.repository.participant.UserRepository
 import com.nidoham.server.util.AiProvider
@@ -50,13 +51,16 @@ class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
     private val firebaseAuth: FirebaseAuth,
-    private val aiMessageSender: AiMessageSender,
+    private val manager: AiMessageManager = AiMessageManager(
+        messageRepository = messageRepository
+    ),
 ) : ViewModel() {
 
     // ── Thresholds ────────────────────────────────────────────────────────────
 
     private val onlineStalenessMs: Long    = TimeUnit.MINUTES.toMillis(15)
     private val selfTypingIdleStopMs: Long = 5_000L
+
 
     // ── UI state ──────────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ class ChatViewModel @Inject constructor(
 
     // ── AI session config — set once via configureAi() ───────────────────────
 
-    private var aiTargetId: String? = null
+    private var aiTargetId: String = ""
     private var aiProvider: AiProvider = AiProvider.ZAI
     private var aiApiKey: String = ""
 
@@ -152,12 +156,11 @@ class ChatViewModel @Inject constructor(
     /**
      * Configures this conversation for AI replies.
      *
-     * Call this once after [initChat] — typically from [ChatActivity] when
-     * the conversation is known to be an AI chat. After calling this, every
-     * [sendMessage] invocation will trigger [AiMessageSender.send] in a
-     * fire-and-forget coroutine. The ViewModel holds no result state; all
-     * outcomes (reply, coming-soon, or error) are written directly to the DB
-     * by [AiMessageSender] and stream back through [observeMessages].
+     * Call this once after [initChat] when the conversation is known to be an
+     * AI chat. After calling this, every [sendMessage] invocation will trigger
+     * [AiMessageSender.send] in a fire-and-forget coroutine. All outcomes
+     * (reply, coming-soon, or error) are written directly to the DB by
+     * [AiMessageSender] and stream back through [observeMessages].
      *
      * @param targetId The AI participant's UID in Firebase.
      * @param provider Which AI backend to use. Defaults to [AiProvider.ZAI].
@@ -261,20 +264,19 @@ class ChatViewModel @Inject constructor(
         val conversationId = currentConversationId ?: return
         _uiState.update { it.copy(inputText = text, isSendError = false) }
 
-        // Suppress self-typing signals in AI conversations — the remote
-        // participant is not human and does not read typing notifications.
-        if (aiTargetId != null) return
+        // TODO: replace hardcoded flag with real conversation-type check.
+        val ai: Boolean = true
 
-        if (text.isNotBlank()) {
-            viewModelScope.launch { messageRepository.setTyping(conversationId, true) }
-            selfTypingStopJob?.cancel()
-            selfTypingStopJob = viewModelScope.launch {
-                delay(selfTypingIdleStopMs)
-                messageRepository.setTyping(conversationId, false)
+            if (text.isNotBlank()) {
+                viewModelScope.launch { messageRepository.setTyping(conversationId, uid = currentUserId, true) }
+                selfTypingStopJob?.cancel()
+                selfTypingStopJob = viewModelScope.launch {
+                    delay(selfTypingIdleStopMs)
+                    messageRepository.setTyping(conversationId, uid = currentUserId, false)
+                }
+            } else {
+                stopSelfTypingInternal()
             }
-        } else {
-            stopSelfTypingInternal()
-        }
     }
 
     /**
@@ -322,18 +324,11 @@ class ChatViewModel @Inject constructor(
                             Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
                         }
 
-                    // Trigger AI reply — fire and forget. The ViewModel handles
-                    // nothing; all DB writes happen inside AiMessageSender.
-                    val targetId = aiTargetId ?: return@onSuccess
+                    // Trigger AI reply only when an AI target has been configured.
+                    // Fire-and-forget — all DB writes happen inside AiMessageSender.
+                    if (aiTargetId.isEmpty()) return@onSuccess
                     launch {
-                        aiMessageSender.send(
-                            userId         = currentUserId,
-                            conversationId = conversationId,
-                            targetId       = targetId,
-                            userInput      = text,
-                            provider       = aiProvider,
-                            apiKey         = aiApiKey,
-                        )
+                        manager.push(userMessage = currentUserId, targetId = aiTargetId, conversationId = conversationId)
                     }
                 }
                 .onFailure {
@@ -345,9 +340,7 @@ class ChatViewModel @Inject constructor(
     fun isMine(message: Message): Boolean =
         message.senderId == currentUserId
 
-    /**
-     * Returns true if the peer has promoted this message's status to [MessageStatus.READ].
-     */
+    /** Returns true if the peer has promoted this message's status to [MessageStatus.READ]. */
     fun isReadByPeer(message: Message): Boolean =
         message.senderId == currentUserId &&
                 message.status == MessageStatus.READ.value
@@ -374,9 +367,10 @@ class ChatViewModel @Inject constructor(
         selfTypingStopJob?.cancel()
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
-        if (aiTargetId != null) return
+        // AI typing is managed entirely by AiMessageSender; never touch it here.
+        if (aiTargetId.isNotEmpty()) return
         viewModelScope.launch {
-            messageRepository.setTyping(conversationId, false)
+            messageRepository.setTyping(conversationId, uid = currentUserId, typing = false)
         }
     }
 

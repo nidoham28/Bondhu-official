@@ -137,7 +137,13 @@ dependencies {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
 
-    implementation("com.github.nidoham28:BondhuAI:ded6f4f110")
+    implementation(libs.bondhuai)
+
+    implementation(libs.zai.sdk)
+    implementation(libs.openai.java)
+
+    implementation(libs.okhttp.v4120)
+    implementation(libs.logging.interceptor.v4120)
 
     // Media3
     implementation(libs.androidx.media3.exoplayer)
