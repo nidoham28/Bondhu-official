@@ -1,6 +1,6 @@
-package com.nidoham.bondhu.di
+package com.nidoham.server.di
 
-import com.nidoham.server.api.API
+import com.nidoham.ai.api.zai.GenerativeAI
 import com.nidoham.server.manager.AiMessageManager
 import com.nidoham.server.repository.message.MessageRepository
 import dagger.Module
@@ -14,10 +14,11 @@ object AiMessageModule {
 
     @Provides
     fun provideAiMessageManager(
+        ai: GenerativeAI,
         messageRepository: MessageRepository
     ): AiMessageManager {
         return AiMessageManager(
-            apiKey = API.apiKey,
+            ai = ai,
             messageRepository = messageRepository
         )
     }
