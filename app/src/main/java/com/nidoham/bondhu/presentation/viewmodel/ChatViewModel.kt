@@ -3,7 +3,6 @@ package com.nidoham.bondhu.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
-import com.nidoham.server.api.API
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.manager.AiMessageManager
@@ -51,16 +50,13 @@ class ChatViewModel @Inject constructor(
     private val messageRepository: MessageRepository,
     private val userRepository: UserRepository,
     private val firebaseAuth: FirebaseAuth,
-    private val manager: AiMessageManager = AiMessageManager(
-        messageRepository = messageRepository
-    ),
+    private val manager: AiMessageManager,
 ) : ViewModel() {
 
     // ── Thresholds ────────────────────────────────────────────────────────────
 
     private val onlineStalenessMs: Long    = TimeUnit.MINUTES.toMillis(15)
     private val selfTypingIdleStopMs: Long = 5_000L
-
 
     // ── UI state ──────────────────────────────────────────────────────────────
 
@@ -156,11 +152,10 @@ class ChatViewModel @Inject constructor(
     /**
      * Configures this conversation for AI replies.
      *
-     * Call this once after [initChat] when the conversation is known to be an
-     * AI chat. After calling this, every [sendMessage] invocation will trigger
-     * [AiMessageSender.send] in a fire-and-forget coroutine. All outcomes
-     * (reply, coming-soon, or error) are written directly to the DB by
-     * [AiMessageSender] and stream back through [observeMessages].
+     * Call once after [initChat] when the conversation is known to be an AI
+     * chat. After calling this, every [sendMessage] invocation will fire-and-
+     * forget an AI reply pipeline via [AiMessageManager.push]. All outcomes
+     * stream back through [observeMessages] exactly like any other message.
      *
      * @param targetId The AI participant's UID in Firebase.
      * @param provider Which AI backend to use. Defaults to [AiProvider.ZAI].
@@ -226,9 +221,6 @@ class ChatViewModel @Inject constructor(
         messageRepository.observeTyping(conversationId)
             .catch { _uiState.update { it.copy(isPeerTyping = false) } }
             .collect { typingState ->
-                // This stream covers both human peers and AI peers — AiMessageSender
-                // writes the AI's typing state to the same node under targetId,
-                // so this single collector handles all cases transparently.
                 _uiState.update { it.copy(isPeerTyping = peerId in typingState.typingUserIds) }
             }
     }
@@ -264,29 +256,24 @@ class ChatViewModel @Inject constructor(
         val conversationId = currentConversationId ?: return
         _uiState.update { it.copy(inputText = text, isSendError = false) }
 
-        // TODO: replace hardcoded flag with real conversation-type check.
-        val ai: Boolean = true
-
-            if (text.isNotBlank()) {
-                viewModelScope.launch { messageRepository.setTyping(conversationId, uid = currentUserId, true) }
-                selfTypingStopJob?.cancel()
-                selfTypingStopJob = viewModelScope.launch {
-                    delay(selfTypingIdleStopMs)
-                    messageRepository.setTyping(conversationId, uid = currentUserId, false)
-                }
-            } else {
-                stopSelfTypingInternal()
+        if (text.isNotBlank()) {
+            viewModelScope.launch { messageRepository.setTyping(conversationId, uid = currentUserId, true) }
+            selfTypingStopJob?.cancel()
+            selfTypingStopJob = viewModelScope.launch {
+                delay(selfTypingIdleStopMs)
+                messageRepository.setTyping(conversationId, uid = currentUserId, false)
             }
+        } else {
+            stopSelfTypingInternal()
+        }
     }
 
     /**
      * Sends the current input as a user message, then — if AI mode is
-     * configured — delegates the full reply pipeline to [AiMessageSender].
+     * configured — delegates the full reply pipeline to [AiMessageManager].
      *
-     * In AI mode the ViewModel does exactly two things after a successful
-     * user message write: launch [AiMessageSender.send] and return. No
-     * result is observed. The AI reply (or any error/coming-soon message)
-     * streams back through [observeMessages] exactly like any other message.
+     * Fire-and-forget in AI mode. The reply streams back through
+     * [observeMessages] exactly like any other message.
      */
     fun sendMessage() {
         val text           = _uiState.value.inputText.trim()
@@ -324,11 +311,13 @@ class ChatViewModel @Inject constructor(
                             Timber.w(e, "ChatViewModel: failed to increment messageCount for $conversationId")
                         }
 
-                    // Trigger AI reply only when an AI target has been configured.
-                    // Fire-and-forget — all DB writes happen inside AiMessageSender.
                     if (aiTargetId.isEmpty()) return@onSuccess
                     launch {
-                        manager.push(userMessage = currentUserId, targetId = aiTargetId, conversationId = conversationId)
+                        manager.push(
+                            userMessage    = text,
+                            targetId       = aiTargetId,
+                            conversationId = conversationId
+                        )
                     }
                 }
                 .onFailure {
@@ -367,7 +356,6 @@ class ChatViewModel @Inject constructor(
         selfTypingStopJob?.cancel()
         selfTypingStopJob = null
         val conversationId = currentConversationId ?: return
-        // AI typing is managed entirely by AiMessageSender; never touch it here.
         if (aiTargetId.isNotEmpty()) return
         viewModelScope.launch {
             messageRepository.setTyping(conversationId, uid = currentUserId, typing = false)

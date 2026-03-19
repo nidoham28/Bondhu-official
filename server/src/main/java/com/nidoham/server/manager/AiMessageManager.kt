@@ -1,19 +1,19 @@
 package com.nidoham.server.manager
 
 import com.nidoham.ai.GenerativeAIWrapper
+import com.nidoham.ai.api.zai.GenerativeAI
 import com.nidoham.server.api.API
 import com.nidoham.server.domain.message.Message
 import com.nidoham.server.domain.message.MessagePreview
 import com.nidoham.server.repository.message.MessageRepository
 import com.nidoham.server.util.MessageType
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 class AiMessageManager(
     apiKey: String = API.apiKey,
-    private val messageRepository: MessageRepository
+    private val messageRepository: MessageRepository,
 ) {
     private val generativeAI = GenerativeAIWrapper(
         provider = GenerativeAIWrapper.Provider.GLM,
@@ -21,25 +21,22 @@ class AiMessageManager(
     )
 
     /**
-     * Pushes user message to AI and sends the response to the conversation.
+     * Sends [userMessage] to the AI and writes the response into [conversationId]
+     * as a message from [targetId]. Failures are logged silently — no error
+     * content is ever written to the conversation.
      */
     suspend fun push(userMessage: String, targetId: String, conversationId: String) {
         generativeAI.sendMessage(userMessage).fold(
             onSuccess = { response ->
-                val content = response.content?.toString() ?: ""
+                val content = GenerativeAI.toContent(response)
                 sendMessage(content, targetId, conversationId)
             },
             onFailure = { exception ->
-                val errorMsg = exception.message ?: "AI request failed"
-                Timber.e(exception, "AI push failed: $errorMsg")
-                sendMessage(errorMsg, targetId, conversationId)
+                Timber.e(exception, "AiMessageManager: push failed for conversation $conversationId")
             }
         )
     }
 
-    /**
-     * Sends a message to the repository. Must be called from a coroutine.
-     */
     private suspend fun sendMessage(content: String, targetId: String, conversationId: String) {
         if (content.isEmpty()) return
 
@@ -72,7 +69,7 @@ class AiMessageManager(
                         }
                 }
                 .onFailure { e ->
-                    Timber.e(e, "AiMessageManager: failed to send message")
+                    Timber.e(e, "AiMessageManager: failed to send message to $conversationId")
                 }
         }
     }

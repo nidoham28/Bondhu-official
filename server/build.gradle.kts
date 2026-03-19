@@ -62,7 +62,6 @@ dependencies {
     // AI SDKs
     implementation(libs.bondhu.ai)
     implementation(libs.zai.sdk)
-    implementation(libs.openai.java)
 
     // Logging
     implementation(libs.timber)

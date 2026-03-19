@@ -134,7 +134,6 @@ dependencies {
     // AI SDKs
     implementation(libs.bondhu.ai)
     implementation(libs.zai.sdk)
-    implementation(libs.openai.java)
 
     // Local modules
     implementation(project(":server"))
